@@ -1,0 +1,14 @@
+# docs — ignore every docs folder
+docs/
+**/docs/
+
+# env — secrets, never push (keep .env.example tracked)
+.env
+.env.local
+.env.*.local
+
+# deps
+node_modules/
+
+# build output
+dist/
