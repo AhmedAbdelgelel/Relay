@@ -35,6 +35,9 @@ function liveCfg(): GatewayConfig {
     ollamaModel: "llama3.1:8b",
     openaiApiKey: "",
     openaiBaseUrl: "https://api.openai.com/v1",
+    redisUrl: "",
+    cacheTtlSec: 3600,
+    cacheEnabled: true,
   };
 }
 
@@ -83,8 +86,8 @@ describe.skipIf(!HAS_KEY)("gemini live prompt (real upstream)", () => {
           },
           ctrl.signal,
         )) {
-          expect(typeof chunk).toBe("string");
-          acc += chunk;
+          expect(typeof chunk.delta).toBe("string");
+          acc += chunk.delta;
         }
         expect(acc.length).toBeGreaterThan(0);
         expect(acc).toMatch(/1|2|3/);

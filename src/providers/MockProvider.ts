@@ -4,7 +4,7 @@
 import type { ChatResponse } from "../domain/types.js";
 import type { ChatRequest } from "../domain/types.js";
 import { GatewayError } from "../domain/types.js";
-import type { ProviderAdapter } from "./ProviderAdapter.js";
+import type { ProviderAdapter, StreamChunk } from "./ProviderAdapter.js";
 
 export type MockFailure = "rate_limited" | "server_error" | null;
 
@@ -58,13 +58,15 @@ export class MockProvider implements ProviderAdapter {
     };
   }
 
-  async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncIterable<string> {
+  async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
     await this.wait(signal);
     this.maybeFail();
     // Yield 3 chunks so SSE framing + client-abort mid-stream are testable.
     for (const chunk of ["mock ", "stream ", `(${req.model})`]) {
       if (signal.aborted) throw new GatewayError(504, "gateway_timeout", "mock stream aborted.", true);
-      yield chunk;
+      yield { delta: chunk };
     }
+    // Terminal usage-only frame, exactly like OpenAI with stream_options.include_usage.
+    yield { delta: "", usage: { prompt_tokens: 10, completion_tokens: 5 } };
   }
 }
