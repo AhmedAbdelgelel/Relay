@@ -14,6 +14,9 @@ export interface GatewayConfig {
   ollamaModel: string;
   openaiApiKey: string;
   openaiBaseUrl: string;
+  redisUrl: string;
+  cacheTtlSec: number;
+  cacheEnabled: boolean;
 }
 
 function str(name: string, fallback = ""): string {
@@ -25,6 +28,12 @@ function num(name: string, fallback: number): number {
   if (!raw) return fallback;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function bool(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.toLowerCase();
+  if (raw === undefined || raw === "") return fallback;
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
@@ -43,5 +52,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     ollamaModel: str("OLLAMA_MODEL", "llama3.1:8b"),
     openaiApiKey: str("OPENAI_API_KEY"),
     openaiBaseUrl: str("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+    redisUrl: str("REDIS_URL"),
+    cacheTtlSec: num("CACHE_TTL_S", 3600),
+    cacheEnabled: bool("CACHE_ENABLED", true),
   };
 }

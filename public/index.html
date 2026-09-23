@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Gateway — Chat</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<button id="menuBtn" type="button" aria-label="Menu">
+  <span></span><span></span><span></span>
+</button>
+
+<aside id="sidebar">
+  <div class="side-head">
+    <span class="brand-mark"></span>
+    <span class="brand-name">LLM Gateway</span>
+  </div>
+  <button id="newChatBtn" type="button">+ New chat</button>
+  <div id="chatStack"></div>
+  <div class="side-foot">
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">Connecting…</span>
+  </div>
+</aside>
+
+<main class="chat-wrap">
+  <div id="thread"></div>
+
+  <details class="session" id="sessionPanel">
+    <summary>
+      <span class="session-title">Session</span>
+      <span class="session-line" id="statsSummary">No requests yet</span>
+    </summary>
+    <div class="session-grid">
+      <div class="stat"><b id="statRequests">0</b><span>requests</span></div>
+      <div class="stat"><b id="statHits">0</b><span>cache hits</span></div>
+      <div class="stat"><b id="statMisses">0</b><span>cache misses</span></div>
+      <div class="stat"><b id="statRate">—</b><span>hit rate</span></div>
+      <div class="stat"><b id="statBypassed">0</b><span>streams bypassed</span></div>
+      <div class="stat"><b id="statDisabled">0</b><span>cache disabled</span></div>
+      <div class="stat"><b id="statErrors">0</b><span>errors</span></div>
+      <div class="stat"><b id="statSaved">0</b><span>provider calls saved</span></div>
+      <div class="stat"><b id="statTokensIn">0</b><span>tokens in</span></div>
+      <div class="stat"><b id="statTokensOut">0</b><span>tokens out</span></div>
+      <div class="stat"><b id="statReused">0</b><span>tokens reused</span></div>
+      <div class="stat"><b id="statChunks">0</b><span>stream chunks</span></div>
+      <div class="stat"><b id="statAvgLatency">—</b><span>avg latency</span></div>
+      <div class="stat"><b id="statTtft">—</b><span>avg TTFT</span></div>
+    </div>
+  </details>
+
+  <div class="composer">
+    <textarea id="composerInput" rows="1" placeholder="Message Gemini through your gateway…"></textarea>
+    <div class="composer-bar">
+      <span class="composer-hint" id="composerHint" title="Rough token estimate of your prompt (~4 chars/token). The gateway reports exact numbers after the call.">≈ 0 tokens</span>
+      <span class="provider-pill">Google · Gemini</span>
+      <select id="modelSel" aria-label="Model"></select>
+      <details class="params">
+        <summary title="Sampling randomness: 0 is deterministic, 2 is most creative. 0.7 is the balanced default.">Params</summary>
+        <div class="params-pop">
+          <label class="param">
+            <span>Temperature <b id="tempVal"></b></span>
+            <input type="range" id="tempInput" min="0" max="2" step="0.1" title="0 deterministic · 0.7 balanced default · 2 most creative">
+          </label>
+          <label class="param">
+            <span>Max tokens</span>
+            <input type="number" id="tokensInput" min="1" max="8192">
+          </label>
+          <label class="param row">
+            <span>Streaming</span>
+            <button class="toggle" id="streamToggle" type="button" role="switch" aria-checked="true"><span class="knob"></span></button>
+          </label>
+        </div>
+      </details>
+      <button class="send" id="sendBtn" type="button" aria-label="Send">
+        <span id="sendLabel">↑</span>
+      </button>
+    </div>
+  </div>
+</main>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

@@ -8,6 +8,12 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Provider-reported token accounting. Same shape for chat() and chatStream(). */
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
 export interface ChatRequest {
   model: string;
   messages: ChatMessage[];
@@ -20,7 +26,7 @@ export interface ChatResponse {
   id: string;
   model: string;
   content: string;
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: TokenUsage;
 }
 
 /** Standardized error the HTTP layer understands. */

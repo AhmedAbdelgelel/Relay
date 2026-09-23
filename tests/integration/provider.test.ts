@@ -12,6 +12,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
     geminiBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     ollamaBaseUrl: "http://localhost:11434/v1", ollamaModel: "llama3.1:8b",
     openaiApiKey: "", openaiBaseUrl: "https://api.openai.com/v1",
+    redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
     ...over,
   };
 }

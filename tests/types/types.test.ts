@@ -4,6 +4,7 @@ import type {
   ChatRequest,
   ChatResponse,
   ChatRole,
+  TokenUsage,
 } from "../../src/domain/types.js";
 import { GatewayError } from "../../src/domain/types.js";
 import type {
@@ -15,7 +16,7 @@ import {
   providerHttpError,
   toGatewayError,
 } from "../../src/infrastructure/errors.js";
-import type { ProviderAdapter } from "../../src/providers/ProviderAdapter.js";
+import type { ProviderAdapter, StreamChunk } from "../../src/providers/ProviderAdapter.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
 import type { MockFailure } from "../../src/providers/MockProvider.js";
 import { OpenAICompatibleProvider } from "../../src/providers/OpenAICompatibleProvider.js";
@@ -67,9 +68,9 @@ describe("domain types", () => {
     expectTypeOf<ChatResponse["id"]>().toEqualTypeOf<string>();
     expectTypeOf<ChatResponse["model"]>().toEqualTypeOf<string>();
     expectTypeOf<ChatResponse["content"]>().toEqualTypeOf<string>();
-    expectTypeOf<ChatResponse["usage"]>().toEqualTypeOf<
-      { prompt_tokens: number; completion_tokens: number } | undefined
-    >();
+    expectTypeOf<ChatResponse["usage"]>().toEqualTypeOf<TokenUsage | undefined>();
+    // TokenUsage is the single accounting shape shared by chat() and chatStream().
+    expectTypeOf<TokenUsage>().toEqualTypeOf<{ prompt_tokens: number; completion_tokens: number }>();
 
     const res: ChatResponse = {
       id: "mock-1",
@@ -111,6 +112,9 @@ describe("config types", () => {
     expectTypeOf<GatewayConfig["ollamaModel"]>().toEqualTypeOf<string>();
     expectTypeOf<GatewayConfig["openaiApiKey"]>().toEqualTypeOf<string>();
     expectTypeOf<GatewayConfig["openaiBaseUrl"]>().toEqualTypeOf<string>();
+    expectTypeOf<GatewayConfig["redisUrl"]>().toEqualTypeOf<string>();
+    expectTypeOf<GatewayConfig["cacheTtlSec"]>().toEqualTypeOf<number>();
+    expectTypeOf<GatewayConfig["cacheEnabled"]>().toEqualTypeOf<boolean>();
 
     const cfg = loadConfig({ ...process.env, PROVIDER: "mock" });
     expectTypeOf(cfg).toEqualTypeOf<GatewayConfig>();
@@ -125,9 +129,13 @@ describe("provider types", () => {
     expectTypeOf<ProviderAdapter["chat"]>().toEqualTypeOf<
       (req: ChatRequest, signal: AbortSignal) => Promise<ChatResponse>
     >();
+    // D1 contract: streamed pieces carry delta + optional terminal usage.
     expectTypeOf<ProviderAdapter["chatStream"]>().toEqualTypeOf<
-      (req: ChatRequest, signal: AbortSignal) => AsyncIterable<string>
+      (req: ChatRequest, signal: AbortSignal) => AsyncIterable<StreamChunk>
     >();
+    expectTypeOf<StreamChunk>().toEqualTypeOf<{ delta: string; usage?: TokenUsage }>();
+    expectTypeOf<StreamChunk["delta"]>().toEqualTypeOf<string>();
+    expectTypeOf<StreamChunk["usage"]>().toEqualTypeOf<TokenUsage | undefined>();
   });
 
   it("MockProvider satisfies ProviderAdapter; MockFailure union holds", () => {
@@ -167,6 +175,9 @@ describe("provider types", () => {
       ollamaModel: "llama3.1:8b",
       openaiApiKey: "",
       openaiBaseUrl: "https://api.openai.com/v1",
+      redisUrl: "",
+      cacheTtlSec: 3600,
+      cacheEnabled: true,
     };
     const mock: ProviderAdapter = createProviderFromEnv({ ...base, provider: "mock" });
     expect(mock.name).toBe("mock");
