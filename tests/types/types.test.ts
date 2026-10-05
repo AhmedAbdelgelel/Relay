@@ -97,8 +97,8 @@ describe("domain types", () => {
 });
 
 describe("config types", () => {
-  it("ProviderName is mock|gemini|ollama|openai", () => {
-    expectTypeOf<ProviderName>().toEqualTypeOf<"mock" | "gemini" | "ollama" | "openai">();
+  it("ProviderName is mock|gemini|ollama|openai|anthropic", () => {
+    expectTypeOf<ProviderName>().toEqualTypeOf<"mock" | "gemini" | "ollama" | "openai" | "anthropic">();
   });
 
   it("GatewayConfig has all required fields with correct types", () => {
@@ -112,6 +112,10 @@ describe("config types", () => {
     expectTypeOf<GatewayConfig["ollamaModel"]>().toEqualTypeOf<string>();
     expectTypeOf<GatewayConfig["openaiApiKey"]>().toEqualTypeOf<string>();
     expectTypeOf<GatewayConfig["openaiBaseUrl"]>().toEqualTypeOf<string>();
+    expectTypeOf<GatewayConfig["openaiModel"]>().toEqualTypeOf<string>();
+    expectTypeOf<GatewayConfig["anthropicApiKey"]>().toEqualTypeOf<string>();
+    expectTypeOf<GatewayConfig["anthropicBaseUrl"]>().toEqualTypeOf<string>();
+    expectTypeOf<GatewayConfig["anthropicModel"]>().toEqualTypeOf<string>();
     expectTypeOf<GatewayConfig["redisUrl"]>().toEqualTypeOf<string>();
     expectTypeOf<GatewayConfig["cacheTtlSec"]>().toEqualTypeOf<number>();
     expectTypeOf<GatewayConfig["cacheEnabled"]>().toEqualTypeOf<boolean>();
@@ -175,9 +179,21 @@ describe("provider types", () => {
       ollamaModel: "llama3.1:8b",
       openaiApiKey: "",
       openaiBaseUrl: "https://api.openai.com/v1",
+      openaiModel: "gpt-4o-mini",
+      anthropicApiKey: "",
+      anthropicBaseUrl: "https://api.anthropic.com",
+      anthropicModel: "claude-4",
       redisUrl: "",
       cacheTtlSec: 3600,
       cacheEnabled: true,
+      embeddingProvider: "mock",
+      embeddingModel: "",
+      semanticEnabled: false,
+      semanticThreshold: 0.92,
+      semanticTopK: 3,
+      semanticTtlSec: 3600,
+      semanticStore: "memory",
+      databaseUrl: "",
     };
     const mock: ProviderAdapter = createProviderFromEnv({ ...base, provider: "mock" });
     expect(mock.name).toBe("mock");

@@ -35,9 +35,21 @@ function liveCfg(): GatewayConfig {
     ollamaModel: "llama3.1:8b",
     openaiApiKey: "",
     openaiBaseUrl: "https://api.openai.com/v1",
+    openaiModel: "gpt-4o-mini",
+    anthropicApiKey: "",
+    anthropicBaseUrl: "https://api.anthropic.com",
+    anthropicModel: "claude-4",
     redisUrl: "",
     cacheTtlSec: 3600,
     cacheEnabled: true,
+    embeddingProvider: "mock",
+    embeddingModel: "",
+    semanticEnabled: false,
+    semanticThreshold: 0.92,
+    semanticTopK: 3,
+    semanticTtlSec: 3600,
+    semanticStore: "memory",
+    databaseUrl: "",
   };
 }
 

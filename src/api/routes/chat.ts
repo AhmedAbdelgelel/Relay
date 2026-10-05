@@ -5,13 +5,20 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { CachedChatResponse, CacheRepository } from "../../cache/CacheRepository.js";
+import type { SemanticCacheStore } from "../../cache/SemanticCacheStore.js";
+import { SingleFlight } from "../../cache/SingleFlight.js";
 import { buildExactCacheKey } from "../../domain/normalize.js";
-import type { ChatRequest, TokenUsage } from "../../domain/types.js";
+import { normalizeChatContent, StreamingResponseNormalizer } from "../../domain/responseNormalizer.js";
+import type { ChatRequest, ChatResponse, TokenUsage } from "../../domain/types.js";
 import { GatewayError } from "../../domain/types.js";
+import { promptTextForEmbedding, type EmbeddingProvider } from "../../embeddings/EmbeddingProvider.js";
 import type { GatewayConfig } from "../../infrastructure/config.js";
 import { toGatewayError } from "../../infrastructure/errors.js";
 import { log } from "../../infrastructure/logger.js";
+import { metrics } from "../../observability/metrics.js";
+import { isReusableSemantic } from "../../policy/reuse.js";
 import type { ProviderAdapter } from "../../providers/ProviderAdapter.js";
+import { providerForModel } from "../../providers/factory.js";
 
 const BodySchema = z.object({
   model: z.string().min(1, "model is required"),
@@ -23,7 +30,42 @@ const BodySchema = z.object({
   stream: z.boolean().default(false),
 });
 
-export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapter, cfg: GatewayConfig, cache?: CacheRepository): void {
+export interface ChatRouteDeps {
+  semanticStore?: SemanticCacheStore;
+  embedder?: EmbeddingProvider;
+  providers?: Map<string, ProviderAdapter>;
+}
+
+function tenantOf(request: { headers: Record<string, unknown> }): string {
+  const raw = request.headers["x-tenant-id"];
+  const t = (Array.isArray(raw) ? raw[0] : raw) as string | undefined;
+  const trimmed = typeof t === "string" ? t.trim() : "";
+  return trimmed || "default";
+}
+
+// Quota hint: providers often say when to retry ("Please retry in 7h33m58s",
+// "retry in 12s", "retryDelay": "7s"). Surface it as error.retry_after so the
+// UI can show a human hint instead of making the user dig through the message.
+// Returns the raw duration token ("7h33m58s") or undefined when unparseable.
+export function parseRetryAfter(message: string): string | undefined {
+  const m = message.match(/retry\s*(?:in|after)?\s*:?\s*((?:\d+\.?\d*\s*h\s*)?(?:\d+\.?\d*\s*m(?!s)\s*)?(?:\d+\.?\d*\s*s)?)/i);
+  if (m && m[1] && /[\dhms]/i.test(m[1]) && /\d/.test(m[1])) {
+    const token = m[1].replace(/\s+/g, "");
+    if (token) return token;
+  }
+  const delay = message.match(/retryDelay"?\s*:?\s*"?(\d+)\s*s/i);
+  if (delay) return `${delay[1]}s`;
+  return undefined;
+}
+
+export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapter, cfg: GatewayConfig, cache?: CacheRepository, deps: ChatRouteDeps = {}): void {
+  // Day 10-11: one flight table per app instance (test isolation). Keyed by
+  // exact cacheKey, so different prompts/providers never coalesce.
+  const flight = new SingleFlight<ChatResponse>();
+
+  // Day 13: JSON snapshot for operators/tests. Prometheus format stays Week 6.
+  app.get("/metrics", async () => metrics.snapshot());
+
   app.post("/v1/chat/completions", async (request, reply) => {
     const start = Date.now();
     const requestId = (request.headers["x-request-id"] as string) || randomUUID();
@@ -43,12 +85,18 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       max_tokens: parsed.data.max_tokens,
       stream: parsed.data.stream,
     };
+    // Per-model routing: when a providers map is present, the model prefix
+    // selects the adapter (gpt-* -> openai, claude-* -> anthropic, ...).
+    // Otherwise use the single injected provider (backward compatible).
+    const active: ProviderAdapter = deps.providers ? providerForModel(req.model, deps.providers, provider) : provider;
 
     // D3: hash the canonical request for EVERY validated request and echo it as
     // x-cache-hash. This is the client's proof of why a call HIT or MISSED (and
     // for stream:BYPASS, the key it *would* have used). sha256 of canonical JSON
     // is cheap and opaque — the canonical body itself is never echoed.
-    const { key: cacheKey, hash: cacheHash } = buildExactCacheKey(provider.name, req);
+    // Exact cache key embeds the ACTIVE provider name, so routing automatically
+    // isolates cache entries + singleflight flights per provider.
+    const { key: cacheKey, hash: cacheHash } = buildExactCacheKey(active.name, req);
     reply.header("x-cache-hash", cacheHash);
 
     // 2. Timeout + client-abort share one AbortController (see docs/experiments/day01-provider-timeout.md).
@@ -65,19 +113,25 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
 
     try {
       if (!req.stream) {
+        metrics.inc("requests_total");
         const useCache = cfg.cacheEnabled && cache !== undefined;
+        // --- L1 exact lookup (cache-aside). Failure/malformed => MISS, never 5xx.
         if (useCache) {
+          const t0 = Date.now();
           try {
             const raw = await cache!.get(cacheKey);
+            metrics.observeCacheLookup(Date.now() - t0);
             if (raw !== null) {
               try {
                 const cached = JSON.parse(raw) as CachedChatResponse;
                 if (typeof cached.content === "string" && typeof cached.model === "string") {
                   const latency = Date.now() - start;
-                  reply.header("x-provider", provider.name);
+                  metrics.inc("exact_hits");
+                  reply.header("x-provider", active.name);
                   reply.header("x-latency-ms", String(latency));
                   reply.header("x-cache", "HIT");
-                  log({ request_id: requestId, provider: provider.name, status: 200, latency_ms: latency, stream: false, cache: "hit" });
+                  reply.header("x-coalesced", "false");
+                  log({ request_id: requestId, provider: active.name, status: 200, latency_ms: latency, stream: false, cache: "hit" });
                   return reply.send({
                     id: `cached-${Date.now()}`,
                     model: cached.model,
@@ -88,30 +142,138 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
                 throw new Error("bad shape");
               } catch {
                 await cache!.del(cacheKey).catch(() => undefined);
-                log({ request_id: requestId, provider: provider.name, cache: "malformed-evict" });
+                metrics.inc("exact_misses");
+                log({ request_id: requestId, provider: active.name, cache: "malformed-evict" });
               }
+            } else {
+              metrics.inc("exact_misses");
             }
           } catch (err) {
-            log({ request_id: requestId, provider: provider.name, cache: "lookup-failed-miss", error: (err as Error)?.message ?? String(err) });
+            metrics.observeCacheLookup(Date.now() - t0);
+            metrics.inc("cache_lookup_failed");
+            metrics.inc("exact_misses");
+            log({ request_id: requestId, provider: active.name, cache: "lookup-failed-miss", error: (err as Error)?.message ?? String(err) });
           }
         }
-        const out = await provider.chat(req, ctrl.signal);
-        if (useCache) {
-          const payload: CachedChatResponse = {
-            content: out.content,
-            model: out.model,
-            usage: out.usage,
-            cachedAt: new Date().toISOString(),
-          };
-          await cache!.set(cacheKey, JSON.stringify(payload), cfg.cacheTtlSec).catch((err: unknown) =>
-            log({ request_id: requestId, provider: provider.name, cache: "write-failed", error: (err as Error)?.message ?? String(err) }),
-          );
+        // --- L2 semantic lookup (build plan §21: Exact MISS -> Semantic -> Policy).
+        // Non-stream only, like exact. Degrades to MISS on any failure, never 5xx.
+        // Modular monolith: api/ depends on ports only (SemanticCacheStore,
+        // EmbeddingProvider) + pure policy/isReusableSemantic. No SDK here.
+        const tenant = tenantOf(request);
+        const useSemantic = cfg.semanticEnabled && deps.semanticStore !== undefined && deps.embedder !== undefined;
+        let queryEmbedding: number[] | undefined;
+        let queryText = "";
+        if (useSemantic) {
+          try {
+            queryText = promptTextForEmbedding(req);
+            queryEmbedding = await deps.embedder!.embed(queryText, ctrl.signal);
+            const candidates = await deps.semanticStore!.findSimilar(
+              queryEmbedding,
+              { tenant, provider: active.name, model: req.model },
+              { threshold: cfg.semanticThreshold, topK: cfg.semanticTopK },
+            );
+            for (const hit of candidates) {
+              const decision = isReusableSemantic(req, hit, { provider: active.name, threshold: cfg.semanticThreshold });
+              if (!decision.reusable) continue;
+              const latency = Date.now() - start;
+              metrics.inc("semantic_hits");
+              metrics.observeSemanticScore(hit.similarity);
+              await deps.semanticStore!.recordHit(hit.id).catch(() => undefined);
+              reply.header("x-provider", active.name);
+              reply.header("x-latency-ms", String(latency));
+              reply.header("x-cache", "SEMANTIC_HIT");
+              reply.header("x-semantic-similarity", hit.similarity.toFixed(4));
+              reply.header("x-coalesced", "false");
+              log({ request_id: requestId, provider: active.name, status: 200, latency_ms: latency, stream: false, cache: "semantic-hit", similarity: hit.similarity });
+              return reply.send({
+                id: `semcached-${Date.now()}`,
+                model: req.model,
+                choices: [{ message: { role: "assistant", content: hit.content }, finish_reason: "stop" }],
+                usage: hit.usage,
+              });
+            }
+            metrics.inc("semantic_misses");
+          } catch (err) {
+            metrics.inc("semantic_errors");
+            log({ request_id: requestId, provider: active.name, cache: "semantic-failed-miss", error: (err as Error)?.message ?? String(err) });
+            queryEmbedding = undefined;
+          }
         }
+        // --- Day 10-11 single-flight: N concurrent identical misses => 1 provider call.
+        // Flight key = exact cacheKey (provider-scoped), so it works even when the
+        // cache is DISABLED. Upstream runs on its own AbortController: a single
+        // waiter disconnecting rejects only its own wait (awaitShared), never the
+        // shared work. No await between has() and run() => flag is exact.
+        const wasCoalesced = flight.has(cacheKey);
+        const shared = flight.run(cacheKey, async () => {
+          metrics.inc("provider_requests");
+          const pt0 = Date.now();
+          const upstream = new AbortController();
+          const upstreamTimer = setTimeout(() => upstream.abort(), cfg.upstreamTimeoutMs);
+          try {
+            const raw = await active.chat(req, upstream.signal);
+            metrics.observeProviderLatency(Date.now() - pt0);
+            // Response Processor (build plan §21): strip presentation markup
+            // BEFORE the caches see it, so an exact hit and a semantic hit both
+            // return the same clean text and stored blobs stay canonical.
+            const out: ChatResponse = { ...raw, content: normalizeChatContent(raw.content) };
+            if (useCache) {
+              const payload: CachedChatResponse = {
+                content: out.content,
+                model: out.model,
+                usage: out.usage,
+                cachedAt: new Date().toISOString(),
+              };
+              await cache!.set(cacheKey, JSON.stringify(payload), cfg.cacheTtlSec).catch((err: unknown) => {
+                metrics.inc("cache_write_failed");
+                log({ request_id: requestId, provider: active.name, cache: "write-failed", error: (err as Error)?.message ?? String(err) });
+              });
+            }
+            // --- Cache admission (semantic): store MISS responses for future reuse.
+            // Best-effort: reuse lookup embedding when available to avoid a 2nd
+            // embed call; failures never fail the request.
+            if (useSemantic && typeof out.content === "string" && out.content.trim() !== "") {
+              try {
+                let embedding = queryEmbedding;
+                if (!embedding) {
+                  const text = queryText || promptTextForEmbedding(req);
+                  embedding = await deps.embedder!.embed(text, upstream.signal);
+                }
+                await deps.semanticStore!.save({
+                  tenant,
+                  provider: active.name,
+                  model: req.model,
+                  promptHash: cacheHash,
+                  promptText: queryText || promptTextForEmbedding(req),
+                  temperature: req.temperature ?? 1.0,
+                  maxTokens: req.max_tokens ?? undefined,
+                  embedding,
+                  content: out.content,
+                  usage: out.usage,
+                  ttlSeconds: cfg.semanticTtlSec,
+                });
+              } catch (err) {
+                metrics.inc("semantic_errors");
+                log({ request_id: requestId, provider: active.name, cache: "semantic-save-failed", error: (err as Error)?.message ?? String(err) });
+              }
+            }
+            return out;
+          } catch (err) {
+            metrics.inc("provider_errors");
+            throw err;
+          } finally {
+            clearTimeout(upstreamTimer);
+          }
+        });
+        if (wasCoalesced) metrics.inc("singleflight_coalesced");
+        else metrics.inc("singleflight_leaders");
+        const out = await awaitShared(shared, ctrl.signal);
         const latency = Date.now() - start;
-        reply.header("x-provider", provider.name);
+        reply.header("x-provider", active.name);
         reply.header("x-latency-ms", String(latency));
         reply.header("x-cache", useCache ? "MISS" : "DISABLED");
-        log({ request_id: requestId, provider: provider.name, status: 200, latency_ms: latency, stream: false, cache: useCache ? "miss" : "disabled" });
+        reply.header("x-coalesced", wasCoalesced ? "true" : "false");
+        log({ request_id: requestId, provider: active.name, status: 200, latency_ms: latency, stream: false, cache: useCache ? "miss" : "disabled", coalesced: wasCoalesced });
         return reply.send({
           id: out.id,
           model: out.model,
@@ -128,6 +290,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       //      error status instead of a silent empty 200 stream.
       //      After hijack() Fastify sets reply.sent = true, so send() is
       //      unusable — the catch branch writes the raw JSON itself.
+      metrics.inc("requests_total");
       hijacked = true;
       reply.hijack();
       const streamId = `chatcmpl-${Date.now()}`;
@@ -136,7 +299,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
         "x-request-id": requestId,
-        "x-provider": provider.name,
+        "x-provider": active.name,
         "x-cache": "BYPASS",
         "x-cache-hash": cacheHash, // D3: the key this stream bypassed
       };
@@ -157,7 +320,12 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       let headWritten = false;
       let ttftMs = 0;
       let usage: TokenUsage | undefined;
-      for await (const chunk of provider.chatStream(req, ctrl.signal)) {
+      // Same Response Processor as the non-stream path, but streaming-aware: the
+      // normalizer holds back a partial line or an unclosed ** / ``` so a marker
+      // straddling two SSE chunks is never mis-emitted. Bounded extra latency:
+      // at most one partial line.
+      const normalizer = new StreamingResponseNormalizer();
+      for await (const chunk of active.chatStream(req, ctrl.signal)) {
         if (ctrl.signal.aborted) break;
         if (!headWritten) {
           ttftMs = writeHead();
@@ -165,8 +333,16 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         }
         if (chunk.usage) usage = chunk.usage;
         if (chunk.delta) {
-          safeWrite(`data: ${JSON.stringify({ id: streamId, model: req.model, choices: [{ delta: { content: chunk.delta } }] })}\n\n`);
+          const clean = normalizer.push(chunk.delta);
+          if (clean) {
+            safeWrite(`data: ${JSON.stringify({ id: streamId, model: req.model, choices: [{ delta: { content: clean } }] })}\n\n`);
+          }
         }
+      }
+      // Resolve whatever the normalizer held back at end-of-stream.
+      const tail = normalizer.flush();
+      if (tail) {
+        safeWrite(`data: ${JSON.stringify({ id: streamId, model: req.model, choices: [{ delta: { content: tail } }] })}\n\n`);
       }
       if (!headWritten) {
         // Provider yielded nothing (empty stream): still owe the client a head.
@@ -181,7 +357,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       } catch { /* already closed */ }
       log({
         request_id: requestId,
-        provider: provider.name,
+        provider: active.name,
         status: 200,
         latency_ms: Date.now() - start,
         ttft_ms: ttftMs,
@@ -191,8 +367,8 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       });
       return;
     } catch (err) {
-      const gw = err instanceof GatewayError ? err : toGatewayError(provider.name, err);
-      log({ request_id: requestId, provider: provider.name, status: gw.status, latency_ms: Date.now() - start, stream: req.stream, error_code: gw.code });
+      const gw = err instanceof GatewayError ? err : toGatewayError(active.name, err);
+      log({ request_id: requestId, provider: active.name, status: gw.status, latency_ms: Date.now() - start, stream: req.stream, error_code: gw.code });
       if (reply.raw.headersSent) {
         // Mid-stream failure: the client already got 200, so the only honest
         // signal is closing the stream (the UI shows the partial text).
@@ -202,14 +378,15 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       if (hijacked) {
         // D2: failed before the first token -> deliver the real status JSON on
         // the raw socket (Fastify's send() is off-limits after hijack).
-        const body = JSON.stringify({ error: { code: gw.code, message: gw.message, request_id: requestId } });
+        const retryAfter = gw.status === 429 ? parseRetryAfter(gw.message) : undefined;
+        const body = JSON.stringify({ error: { code: gw.code, message: gw.message, request_id: requestId, ...(retryAfter ? { retry_after: retryAfter } : {}) } });
         try {
           if (!reply.raw.destroyed) {
             reply.raw.writeHead(gw.status, {
               "content-type": "application/json; charset=utf-8",
               "content-length": String(Buffer.byteLength(body)),
               "x-request-id": requestId,
-              "x-provider": provider.name,
+              "x-provider": active.name,
               "x-cache": "BYPASS",
               "x-cache-hash": cacheHash,
             });
@@ -218,11 +395,54 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         } catch { /* socket already gone */ }
         return reply;
       }
-      return reply.status(gw.status).send({ error: { code: gw.code, message: gw.message, request_id: requestId } });
+      const retryAfter = gw.status === 429 ? parseRetryAfter(gw.message) : undefined;
+      return reply.status(gw.status).send({ error: { code: gw.code, message: gw.message, request_id: requestId, ...(retryAfter ? { retry_after: retryAfter } : {}) } });
     } finally {
       clearTimeout(timer);
     }
   });
 
-  app.get("/health", async () => ({ ok: true, provider: provider.name, cache: cache?.name ?? "none" }));
+  app.get("/health", async () => ({
+    ok: true,
+    provider: provider.name,
+    cache: cache?.name ?? "none",
+    semantic: deps.semanticStore?.name ?? "none",
+    embedder: deps.embedder?.name ?? "none",
+    // Cache tuning, read-only: lets the control plane show the real policy the
+    // gateway is running with instead of guessing. Contains no secrets.
+    config: {
+      cacheEnabled: cfg.cacheEnabled,
+      cacheTtlSec: cfg.cacheTtlSec,
+      semanticEnabled: cfg.semanticEnabled,
+      semanticThreshold: cfg.semanticThreshold,
+      semanticTopK: cfg.semanticTopK,
+      semanticTtlSec: cfg.semanticTtlSec,
+      upstreamTimeoutMs: cfg.upstreamTimeoutMs,
+    },
+  }));
+}
+
+// Day 11: waiter-side abort. Rejects only this waiter's wait; the shared
+// upstream promise keeps running for the remaining followers.
+function awaitShared<T>(shared: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(
+      new GatewayError(504, "gateway_timeout", "request aborted.", true),
+    );
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () =>
+      reject(new GatewayError(504, "gateway_timeout", "request aborted.", true));
+    signal.addEventListener("abort", onAbort, { once: true });
+    shared.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
 }

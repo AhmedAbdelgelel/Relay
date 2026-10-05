@@ -26,6 +26,24 @@ async function serve(reply: FastifyReply, root: string, file: string): Promise<v
 }
 
 export function registerPlayground(app: FastifyInstance): void {
+  // "Connect via API" in the playground lets the browser point at any gateway
+  // host, which needs CORS on the API surface (and on the x-* headers the UI
+  // reads for its metrics card). Static assets stay same-origin only.
+  const corsRoutes = new Set(["/health", "/metrics", "/providers", "/v1/chat/completions"]);
+  app.addHook("onRequest", async (req, reply) => {
+    if (!corsRoutes.has(req.url.split("?")[0])) return;
+    reply.header("access-control-allow-origin", "*");
+    reply.header("access-control-allow-headers", "content-type, x-request-id, authorization");
+    reply.header("access-control-allow-methods", "GET, POST, OPTIONS");
+    reply.header(
+      "access-control-expose-headers",
+      "x-request-id, x-provider, x-cache, x-cache-hash, x-latency-ms, x-coalesced, x-semantic-similarity",
+    );
+    if (req.method === "OPTIONS") {
+      reply.status(204).send();
+    }
+  });
+
   const root = path.join(process.cwd(), "public");
   app.get("/", async (_req, reply) => {
     await serve(reply, root, "index.html");
