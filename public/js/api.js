@@ -8,7 +8,7 @@ async function readSSE(response, onToken, signal) {
   const decoder = new TextDecoder();
   let buffer = "";
   let text = "";
-  let usage = null;   // terminal usage frame (D1) — null when the provider omitted it
+  let usage = null;   // terminal usage frame (D1) � null when the provider omitted it
   let chunks = 0;     // content deltas seen, a streaming metric of its own
   for (;;) {
     if (signal && signal.aborted) {
@@ -56,27 +56,26 @@ function headersOf(response) {
 }
 
 export class GatewayClient {
-  constructor(baseUrl = "", mode = "real") {
-    this.baseUrl = baseUrl;
-    this.mode = mode;
+  constructor(baseUrl = "", apiKey = "") {
+    this.baseUrl = (baseUrl || "").replace(/\/+$/, "");
+    this.apiKey = apiKey || "";
+  }
+
+  authHeaders() {
+    return this.apiKey ? { Authorization: "Bearer " + this.apiKey } : {};
   }
 
   async health() {
-    if (this.mode === "mock") {
-      await new Promise((r) => setTimeout(r, 120));
-      return { ok: true, provider: "mock", cache: "memory", mock: true };
-    }
-    const res = await fetch(this.baseUrl + "/health");
+    const res = await fetch(this.baseUrl + "/health", { headers: this.authHeaders() });
     if (!res.ok) throw new Error("Gateway unhealthy: " + res.status);
     return res.json();
   }
 
   async chat(payload, opts = {}) {
-    if (this.mode === "mock") return this.mockChat(payload, opts);
     const id = requestId();
     const res = await fetch(this.baseUrl + "/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-request-id": id },
+      headers: { "Content-Type": "application/json", "x-request-id": id, ...this.authHeaders() },
       body: JSON.stringify(payload),
       signal: opts.signal,
     });
@@ -86,7 +85,6 @@ export class GatewayClient {
   }
 
   async chatStream(payload, opts = {}) {
-    if (this.mode === "mock") return this.mockStream(payload, opts);
     const id = requestId();
     const res = await fetch(this.baseUrl + "/v1/chat/completions", {
       method: "POST",
@@ -94,6 +92,7 @@ export class GatewayClient {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         "x-request-id": id,
+        ...this.authHeaders(),
       },
       body: JSON.stringify({ ...payload, stream: true }),
       signal: opts.signal,
@@ -101,16 +100,7 @@ export class GatewayClient {
     const meta = headersOf(res);
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      return {
-      status: res.status,
-      ok: false,
-      json,
-      meta,
-      sentId: id,
-      text: "",
-      usage: null,
-      chunks: 0,
-    };
+      return { status: res.status, ok: false, json, meta, sentId: id, text: "", usage: null, chunks: 0 };
     }
     const text = await readSSE(res, opts.onToken, opts.signal);
     return {
@@ -120,56 +110,8 @@ export class GatewayClient {
       meta,
       sentId: id,
       text: text.text,
-      usage: text.usage,   // D1: real numbers, or null -> caller estimates (labeled ≈)
-      chunks: text.chunks, // streaming metric: content deltas received
-    };
-  }
-
-  async mockChat(payload, opts = {}) {
-    const ms = 500 + Math.random() * 700;
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(resolve, ms);
-      if (opts.signal) {
-        opts.signal.addEventListener("abort", () => {
-          clearTimeout(t);
-          reject(new DOMException("aborted", "AbortError"));
-        }, { once: true });
-      }
-    });
-    const user = payload.messages.filter((m) => m.role === "user").pop();
-    const content = "Mock response for model " + payload.model + ": " + ((user && user.content) || "").slice(0, 160);
-    return {
-      status: 200,
-      ok: true,
-      json: {
-        id: "mock-" + Date.now(),
-        model: payload.model,
-        choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 24, completion_tokens: 32 },
-      },
-      meta: { requestId: requestId(), provider: "mock", latencyMs: String(Math.round(ms)), cache: "MISS", cacheHash: null },
-      sentId: requestId(),
-    };
-  }
-
-  async mockStream(payload, opts = {}) {
-    const parts = ["Mock ", "streaming ", "response ", "for ", payload.model, "."];
-    let text = "";
-    for (const part of parts) {
-      if (opts.signal && opts.signal.aborted) break;
-      await new Promise((r) => setTimeout(r, 140));
-      text += part;
-      if (opts.onToken) opts.onToken(part, text);
-    }
-    return {
-      status: 200,
-      ok: true,
-      json: null,
-      meta: { requestId: requestId(), provider: "mock", latencyMs: null, cache: "BYPASS", cacheHash: null },
-      sentId: requestId(),
-      text,
-      usage: null, // mock mode never reports usage -> exercises the ≈ estimate path
-      chunks: parts.length,
+      usage: text.usage,
+      chunks: text.chunks,
     };
   }
 }

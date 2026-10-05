@@ -59,8 +59,13 @@ function nonce(): string {
 beforeAll(async () => {
   // Overrides must happen before buildServer() reads config. server.js (and
   // its dotenv import) already ran, so these assignments win over .env.
+  // Keys are cleared too: with model-prefix routing, a present GEMINI_API_KEY
+  // would route gemini-* models to the live provider and burn user quota.
   process.env.PROVIDER = "mock";
   process.env.REDIS_URL = "";
+  process.env.GEMINI_API_KEY = "";
+  process.env.OPENAI_API_KEY = "";
+  process.env.ANTHROPIC_API_KEY = "";
   const built = buildServer();
   app = built.app;
   address = await app.listen({ port: 0, host: "127.0.0.1" });
@@ -104,8 +109,11 @@ beforeEach(() => {
 describe("live UI against a real gateway", () => {
   it("boots: online status from real /health and playground assets served", async () => {
     expect(threadText()).toContain("Connected through your gateway");
-    expect((document.querySelector("#statusText") as HTMLElement).textContent).toContain("Online");
-    expect((document.querySelector("#statusText") as HTMLElement).textContent).toContain("mock");
+    // The footer no longer prints a status sentence: the live /health result is
+    // carried by the dot on the workspace row plus its tooltip.
+    expect(document.querySelector("#statusDot")!.classList.contains("on")).toBe(true);
+    expect((document.querySelector("#wsUrl") as HTMLElement).title).toContain("mock");
+    expect((document.querySelector("#wsName") as HTMLElement).textContent).toBe("dev-workspace");
 
     const root = await realFetch(address + "/");
     expect(root.status).toBe(200);

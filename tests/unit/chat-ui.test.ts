@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { buildExactCacheKey } from "../../src/domain/normalize.js";
@@ -164,10 +164,18 @@ beforeEach(async () => {
   await flush(10);
 });
 
+// These suites replace process-wide globals (window/document/fetch) with a
+// JSDOM instance. Without an explicit teardown, whichever file finishes first
+// can leave its DOM installed for the next one, which showed up as flaky
+// "element is null" failures depending on file execution order.
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
 describe("chat boot", () => {
   it("shows greeting, online status, gemini-only models", () => {
     expect(threadText()).toContain("Connected through your gateway");
-    expect(document.querySelector("#statusText")!.textContent).toContain("Online");
+    // Online state is the dot on the workspace row (no status sentence in the footer).
+    expect(document.querySelector("#statusDot")!.classList.contains("on")).toBe(true);
     const models = Array.from(document.querySelectorAll("#modelSel option")).map((o) => (o as HTMLOptionElement).value);
     expect(models).toEqual(["gemini-3.6-flash", "gemini-3.5-flash-lite"]);
     expect(document.querySelector(".provider-pill")!.textContent).toContain("Gemini");

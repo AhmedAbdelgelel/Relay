@@ -3,81 +3,113 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LLM Gateway — Chat</title>
+<meta name="description" content="LLM Gateway control plane — playground, providers, semantic cache and logs.">
+<meta name="theme-color" content="#0f1117">
+<title>LLM Gateway — Control Plane</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237c8cf8'/%3E%3Cstop offset='1' stop-color='%23a78bfa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="/styles.css">
+<script>
+  // Apply the saved theme before first paint so there is no flash of the wrong one.
+  try {
+    var t = localStorage.getItem("llm-gateway-theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  } catch (e) { /* private mode: default dark */ }
+</script>
 </head>
 <body>
-<button id="menuBtn" type="button" aria-label="Menu">
-  <span></span><span></span><span></span>
-</button>
+<a class="skip-link" href="#view">Skip to content</a>
+<button id="menuBtn" type="button" aria-label="Toggle navigation" aria-expanded="true"><span></span><span></span><span></span></button>
+
+<header class="topbar">
+  <span class="crumb"><b>llm-gateway</b> <span class="sep">/</span> <span id="crumb">overview</span></span>
+  <span class="spacer"></span>
+  <button id="themeBtn" class="icon-btn" type="button" aria-label="Toggle light or dark theme" title="Toggle light / dark">
+    <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+    <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg>
+  </button>
+</header>
 
 <aside id="sidebar">
   <div class="side-head">
     <span class="brand-mark"></span>
-    <span class="brand-name">LLM Gateway</span>
+    <span class="brand-name">llm-gateway</span>
+    <span class="brand-ver">v0.1</span>
   </div>
-  <button id="newChatBtn" type="button">+ New chat</button>
+  <nav id="sideNav" aria-label="Primary">
+    <a href="#/overview" data-route="overview"><span class="ni" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.6"/><rect x="14" y="3" width="7" height="5" rx="1.6"/><rect x="14" y="12" width="7" height="9" rx="1.6"/><rect x="3" y="16" width="7" height="5" rx="1.6"/></svg></span>Overview</a>
+    <a href="#/playground" data-route="playground"><span class="ni" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 5.5v13l11-6.5z"/></svg></span>Playground</a>
+    <a href="#/requests" data-route="requests"><span class="ni" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h12m0 0-3.5-3.5M16 9l-3.5 3.5"/><path d="M20 15H8m0 0 3.5-3.5M8 15l3.5 3.5"/></svg></span>Requests</a>
+    <a href="#/cache" data-route="cache"><span class="ni" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6.5" rx="7.5" ry="3"/><path d="M4.5 6.5v5c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-5"/><path d="M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></svg></span>Cache</a>
+    <a href="#/providers" data-route="providers"><span class="ni" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6.5" rx="2"/><rect x="3" y="13.5" width="18" height="6.5" rx="2"/><path d="M6.8 7.2h.01M6.8 16.7h.01"/></svg></span>Providers</a>
+  </nav>
+  <button id="newChatBtn" type="button">+ new chat</button>
   <div id="chatStack"></div>
   <div class="side-foot">
-    <span class="status-dot" id="statusDot"></span>
-    <span id="statusText">Connecting…</span>
+    <button id="workspaceBtn" class="ws-row" type="button" aria-haspopup="true" aria-expanded="false">
+      <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+      <span class="ws-avatar" id="wsAvatar" aria-hidden="true">D</span>
+      <span class="ws-text">
+        <span class="ws-name" id="wsName">dev-workspace</span>
+        <span class="ws-url" id="wsUrl">same origin</span>
+      </span>
+      <span class="ws-chev" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+      </span>
+    </button>
+    <div id="wsMenu" class="ws-menu" role="menu" hidden></div>
   </div>
 </aside>
 
-<main class="chat-wrap">
-  <div id="thread"></div>
-
-  <details class="session" id="sessionPanel">
-    <summary>
-      <span class="session-title">Session</span>
-      <span class="session-line" id="statsSummary">No requests yet</span>
-    </summary>
-    <div class="session-grid">
-      <div class="stat"><b id="statRequests">0</b><span>requests</span></div>
-      <div class="stat"><b id="statHits">0</b><span>cache hits</span></div>
-      <div class="stat"><b id="statMisses">0</b><span>cache misses</span></div>
-      <div class="stat"><b id="statRate">—</b><span>hit rate</span></div>
-      <div class="stat"><b id="statBypassed">0</b><span>streams bypassed</span></div>
-      <div class="stat"><b id="statDisabled">0</b><span>cache disabled</span></div>
-      <div class="stat"><b id="statErrors">0</b><span>errors</span></div>
-      <div class="stat"><b id="statSaved">0</b><span>provider calls saved</span></div>
-      <div class="stat"><b id="statTokensIn">0</b><span>tokens in</span></div>
-      <div class="stat"><b id="statTokensOut">0</b><span>tokens out</span></div>
-      <div class="stat"><b id="statReused">0</b><span>tokens reused</span></div>
-      <div class="stat"><b id="statChunks">0</b><span>stream chunks</span></div>
-      <div class="stat"><b id="statAvgLatency">—</b><span>avg latency</span></div>
-      <div class="stat"><b id="statTtft">—</b><span>avg TTFT</span></div>
-    </div>
-  </details>
-
-  <div class="composer">
-    <textarea id="composerInput" rows="1" placeholder="Message Gemini through your gateway…"></textarea>
-    <div class="composer-bar">
-      <span class="composer-hint" id="composerHint" title="Rough token estimate of your prompt (~4 chars/token). The gateway reports exact numbers after the call.">≈ 0 tokens</span>
-      <span class="provider-pill">Google · Gemini</span>
-      <select id="modelSel" aria-label="Model"></select>
-      <details class="params">
-        <summary title="Sampling randomness: 0 is deterministic, 2 is most creative. 0.7 is the balanced default.">Params</summary>
-        <div class="params-pop">
-          <label class="param">
-            <span>Temperature <b id="tempVal"></b></span>
-            <input type="range" id="tempInput" min="0" max="2" step="0.1" title="0 deterministic · 0.7 balanced default · 2 most creative">
-          </label>
-          <label class="param">
-            <span>Max tokens</span>
-            <input type="number" id="tokensInput" min="1" max="8192">
-          </label>
-          <label class="param row">
-            <span>Streaming</span>
-            <button class="toggle" id="streamToggle" type="button" role="switch" aria-checked="true"><span class="knob"></span></button>
-          </label>
+<main class="app-main">
+<div id="view">
+  <!-- static fallback: full playground so GET / contains all IDs for operators/tests -->
+  <div class="page" data-page="playground">
+    <div class="page-head"><div><h1>Playground</h1><p class="sub">Send real requests through the gateway · POST /v1/chat/completions</p></div>
+      <div class="head-actions"><span class="provider-pill">Google · Gemini</span></div></div>
+    <div class="pg-layout">
+      <section class="panel pg-request">
+        <div class="panel-title">Request</div>
+        <label class="fld"><span>Connect via API · gateway URL</span><input type="text" id="apiBaseInput" placeholder="same origin (leave empty)"></label>
+        <label class="fld"><span>API key (Bearer, optional)</span><input type="password" id="apiKeyInput" placeholder="optional"></label>
+        <label class="fld"><span>Provider</span><select id="providerSel"><option value="google">Google</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="custom">Custom</option></select></label>
+        <label class="fld"><span>Model</span><select id="modelSel" aria-label="Model"></select></label>
+        <label class="fld"><span>Temperature <b id="tempVal">0.7</b></span><input type="range" id="tempInput" min="0" max="2" step="0.1"></label>
+        <label class="fld"><span>Max tokens</span><input type="number" id="tokensInput" min="1" max="8192"></label>
+        <label class="fld row"><span>Streaming</span><button class="toggle" id="streamToggle" type="button" role="switch" aria-checked="true"><span class="knob"></span></button></label>
+        <label class="fld"><span>System</span><textarea id="systemInput" rows="2" placeholder="You are a helpful assistant."></textarea></label>
+        <label class="fld"><span>User message</span><textarea id="composerInput" rows="5" placeholder="Send a prompt through the gateway…"></textarea></label>
+        <div class="composer-bar"><span class="composer-hint" id="composerHint">≈ 0 tokens</span></div>
+        <div class="btn-row"><button class="btn primary" id="sendBtn" type="button"><span id="sendLabel">↑</span> Send Request</button><button class="btn" id="clearBtn" type="button">Clear</button><button class="btn" id="saveTestBtn" type="button">Save Test</button></div>
+      </section>
+      <section class="pg-response">
+        <div class="panel"><div class="panel-title">Response</div><div id="thread"></div>
+          <div class="hintbar"><span><kbd>Enter</kbd> send</span><span><kbd>Shift</kbd>+<kbd>Enter</kbd> newline</span><span><kbd>Esc</kbd> stop</span><span>stream requests bypass the cache</span></div>
         </div>
-      </details>
-      <button class="send" id="sendBtn" type="button" aria-label="Send">
-        <span id="sendLabel">↑</span>
-      </button>
+        <details class="session" id="sessionPanel"><summary><span class="session-title">Session</span><span class="session-line" id="statsSummary">No requests yet</span></summary>
+          <div class="session-grid">
+            <div class="stat"><b id="statRequests">0</b><span>requests</span></div>
+            <div class="stat"><b id="statHits">0</b><span>exact hits</span></div>
+            <div class="stat"><b id="statMisses">0</b><span>exact misses</span></div>
+            <div class="stat"><b id="statRate">—</b><span>hit rate</span></div>
+            <div class="stat"><b id="statSemanticHits">0</b><span>semantic hits</span></div>
+            <div class="stat"><b id="statSemanticRate">—</b><span>semantic rate</span></div>
+            <div class="stat"><b id="statBypassed">0</b><span>streams bypassed</span></div>
+            <div class="stat"><b id="statDisabled">0</b><span>cache disabled</span></div>
+            <div class="stat"><b id="statErrors">0</b><span>errors</span></div>
+            <div class="stat"><b id="statSaved">0</b><span>provider calls saved</span></div>
+            <div class="stat"><b id="statTokensIn">0</b><span>tokens in</span></div>
+            <div class="stat"><b id="statTokensOut">0</b><span>tokens out</span></div>
+            <div class="stat"><b id="statReused">0</b><span>tokens reused</span></div>
+            <div class="stat"><b id="statChunks">0</b><span>stream chunks</span></div>
+            <div class="stat"><b id="statAvgLatency">—</b><span>avg latency</span></div>
+            <div class="stat"><b id="statTtft">—</b><span>avg TTFT</span></div>
+          </div>
+        </details>
+      </section>
     </div>
   </div>
+</div>
 </main>
 
 <script type="module" src="/js/app.js"></script>

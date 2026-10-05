@@ -2,7 +2,9 @@ import { DEFAULTS } from "./config.js";
 
 export function defaultForm() {
   return {
+    provider: DEFAULTS.provider,
     model: DEFAULTS.model,
+    system: "",
     user: "",
     temperature: DEFAULTS.temperature,
     maxTokens: DEFAULTS.maxTokens,
@@ -11,9 +13,14 @@ export function defaultForm() {
 }
 
 export function buildPayload(form) {
+  const messages = [];
+  if (form.system && String(form.system).trim()) {
+    messages.push({ role: "system", content: String(form.system).trim() });
+  }
+  messages.push({ role: "user", content: form.user });
   const payload = {
     model: form.model,
-    messages: [{ role: "user", content: form.user }],
+    messages,
     temperature: form.temperature,
     stream: form.stream,
   };
@@ -105,4 +112,34 @@ export async function copyText(text) {
       return false;
     }
   }
+}
+
+const COST_PER_1M = {
+  "gemini-3.6-flash": { in: 0.075, out: 0.3 },
+  "gemini-3.5-flash-lite": { in: 0.0375, out: 0.15 },
+  "gpt-5": { in: 1.25, out: 10.0 },
+  "gpt-5-mini": { in: 0.25, out: 2.0 },
+  "gpt-4.1": { in: 2.0, out: 8.0 },
+  "claude-4": { in: 3.0, out: 15.0 },
+  "claude-4-sonnet": { in: 1.5, out: 7.5 },
+  "claude-3.7-haiku": { in: 0.25, out: 1.25 },
+};
+
+export function estimateCost(model, tokens) {
+  if (!tokens) return 0;
+  const rate = COST_PER_1M[model] || { in: 0.5, out: 1.5 };
+  return (tokens.prompt / 1e6) * rate.in + (tokens.completion / 1e6) * rate.out;
+}
+
+export function formatCost(usd) {
+  if (usd === null || usd === undefined) return "—";
+  if (usd === 0) return "$0.00";
+  if (usd < 0.01) return "$" + usd.toFixed(4);
+  return "$" + usd.toFixed(2);
+}
+
+export function formatLatency(ms) {
+  if (ms === null || ms === undefined) return "—";
+  if (ms < 1000) return Math.round(ms) + "ms";
+  return (ms / 1000).toFixed(1) + "s";
 }
