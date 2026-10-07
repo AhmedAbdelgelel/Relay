@@ -1,11 +1,4 @@
-// tests/unit/vector-eviction.test.ts — memory vector-store eviction order.
-//
-// GPTCache-style eviction coverage for the semantic store: the capacity bound
-// holds and the victim order is documented. CURRENT behavior is insertion-FIFO
-// (recordHit bumps the hit counter only — it does NOT refresh recency, unlike
-// InMemoryCache.get). This file locks that behavior in place; switching the
-// vector store to access-ordered (LRU) eviction is an owner decision (it would
-// also diverge from pgvector, which has no access-ordered eviction).
+// tests/unit/vector-eviction.test.ts — memory vector-store eviction order (insertion-FIFO documented).
 
 import { describe, expect, it } from "vitest";
 import { InMemoryVectorStore } from "../../src/cache/InMemoryVectorStore.js";

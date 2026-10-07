@@ -1,18 +1,3 @@
-// tests/cache-eval.test.ts — provider-agnostic cache evaluation batteries.
-//
-// This is the cache-eval SERVICE: the same batteries run unchanged against ANY
-// upstream that implements ProviderAdapter (mock here; a live provider needs no
-// battery changes — only the injected adapter). Offline, deterministic, no keys,
-// no network: safe for CI. Live-provider evidence (OpenRouter free tier) is
-// recorded separately in evaluation/openrouter-cache-eval.md.
-//
-// Batteries (mirror the live eval legs 1:1):
-//   exact    — HIT/MISS/format-noise/param+model identity/stream bypass/
-//              stampede coalescing (INV-3)/error non-admission (INV-8)
-//   semantic — paraphrase SEMANTIC_HIT + similarity/policy blocks (temp drift,
-//              unrelated, tenant isolation)/stream bypass
-//   ttl      — exact + semantic expiry after short TTLs
-
 import { beforeEach, describe, expect, it } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import { InMemoryCache } from "../src/cache/InMemoryCache.js";

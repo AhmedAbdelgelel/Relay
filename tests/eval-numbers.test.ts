@@ -1,15 +1,4 @@
-// tests/eval-numbers.test.ts — offline eval numbers for exact + similarity caching.
-//
-// T15 slice (deterministic, CPU-only, no live spend): threshold sweep through the
-// REAL store (InMemoryVectorStore) + REAL policy (isReusableSemantic) over a
-// versioned labeled synthetic set, plus exact-cache latency numbers. What is NOT
-// covered here (full T15): metrics extension, scripts/eval/*, written report,
-// default change — T15 stays pending.
-//
-// GATE: can we defend 0.92 with data instead of tutorial constants?
-// Failure mode if wrong: a threshold locked on theater numbers serves confident
-// wrong answers (banking 99%-FP lesson). Every number below is computed from
-// labeled fixtures through production code — no asserted constants.
+// tests/eval-numbers.test.ts — offline eval numbers (threshold sweep + exact latency).
 
 import { describe, expect, it } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";

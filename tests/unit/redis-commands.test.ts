@@ -1,9 +1,4 @@
 // tests/unit/redis-commands.test.ts — RedisCache wire contract without a server.
-//
-// Parity with how other gateways test their Redis layer (e.g. LiteLLM asserting
-// setex key/TTL wiring): every command the gateway issues is asserted for shape
-// (key passthrough, EX + floored TTL with min 1). Fake client injected through
-// the RedisCacheOpts.client seam; no network, deterministic.
 
 import { describe, expect, it } from "vitest";
 import { RedisCache, type RedisCommands } from "../../src/cache/RedisCache.js";
