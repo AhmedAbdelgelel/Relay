@@ -2,10 +2,10 @@
 // real gateway. tests/unit/chat-ui.test.ts mocks fetch entirely; this file
 // boots the server on a real socket and drives the real public/ JS with Node's
 // real fetch, so routing, validation, exact-cache, SSE framing, x-cache-hash
-// and the terminal usage frame are all exercised end-to-end (loop.md §7:
+// and the terminal usage frame are all exercised end-to-end (agent/implementation.md:
 // "manual curl if HTTP" — automated, and through the UI layer itself).
 //
-// Provider = mock (arch §5: sanctioned zero-setup provider, no Gemini quota),
+// Provider = mock (sanctioned zero-setup provider, no live quota),
 // cache = in-memory (works with or without a local Redis).
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";

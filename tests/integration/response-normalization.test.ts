@@ -26,6 +26,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
 /** Provider that returns a fixed markdown answer, chunked a given way. */
 class MarkdownProvider implements ProviderAdapter {
   readonly name = "mock";
+  readonly capabilities = { chat: true, streaming: true, tools: false, json: false, systemMessages: true, maxTokens: true } as const;
   constructor(
     private readonly answer: string,
     private readonly pieces: string[] = [],

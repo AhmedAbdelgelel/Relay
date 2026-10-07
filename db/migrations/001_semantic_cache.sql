@@ -1,9 +1,3 @@
--- db/migrations/001_semantic_cache.sql — pgvector table for semantic reuse.
--- Run: psql "$DATABASE_URL" -f db/migrations/001_semantic_cache.sql
--- (or scripts/semantic-smoke.mjs, which also round-trips a save/find).
--- Local EDB Postgres 13/18 ships WITHOUT the vector extension (ADR-006), so
--- SEMANTIC_STORE=memory is the zero-setup default until a pgvector host
--- (Neon/Supabase free tier, or PG + CREATE EXTENSION vector) is configured.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -26,8 +20,8 @@ CREATE TABLE IF NOT EXISTS semantic_cache (
   UNIQUE (tenant_id, provider, model, prompt_hash)
 );
 
--- ANN index: exact results not required, recall/latency tradeoff documented
--- in build plan §12. Missing index only costs speed, never correctness.
+-- ANN index: exact results not required; recall/latency tradeoff only costs
+-- speed, never correctness.
 CREATE INDEX IF NOT EXISTS semantic_cache_embedding_hnsw
   ON semantic_cache USING hnsw (embedding vector_cosine_ops);
 

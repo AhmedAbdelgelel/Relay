@@ -4,7 +4,7 @@ import { registerChatRoutes } from "../../src/api/routes/chat.js";
 import { buildExactCacheKey } from "../../src/domain/normalize.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
-import type { ProviderAdapter } from "../../src/providers/ProviderAdapter.js";
+import type { ProviderAdapter, StreamChunk } from "../../src/providers/ProviderAdapter.js";
 
 function testApp(provider: ProviderAdapter = new MockProvider()) {
   const app = Fastify();
@@ -16,6 +16,7 @@ function testApp(provider: ProviderAdapter = new MockProvider()) {
     openaiApiKey: "", openaiBaseUrl: "https://api.openai.com/v1",
     openaiModel: "gpt-4o-mini",
     anthropicApiKey: "", anthropicBaseUrl: "https://api.anthropic.com", anthropicModel: "claude-4",
+    openRouterKey: "", openRouterBaseUrl: "https://openrouter.ai/api/v1", openRouterModel: "nvidia/nemotron-3-super-120b-a12b:free",
     redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
     embeddingProvider: "mock", embeddingModel: "",
     semanticEnabled: false, semanticThreshold: 0.92, semanticTopK: 3,
@@ -156,6 +157,7 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
       openaiApiKey: "", openaiBaseUrl: "https://api.openai.com/v1",
       openaiModel: "gpt-4o-mini",
       anthropicApiKey: "", anthropicBaseUrl: "https://api.anthropic.com", anthropicModel: "claude-4",
+    openRouterKey: "", openRouterBaseUrl: "https://openrouter.ai/api/v1", openRouterModel: "nvidia/nemotron-3-super-120b-a12b:free",
       redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
       embeddingProvider: "mock", embeddingModel: "",
       semanticEnabled: false, semanticThreshold: 0.92, semanticTopK: 3,
@@ -175,10 +177,11 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
   it("provider that yields nothing still closes the stream with [DONE] (D2)", async () => {
     const empty: ProviderAdapter = {
       name: "empty",
+      capabilities: { chat: true, streaming: true, tools: false, json: false, systemMessages: true, maxTokens: true },
       chat: async () => {
         throw new Error("not used in this test");
       },
-      chatStream: async function* () {
+      chatStream: async function* (): AsyncIterable<StreamChunk> {
         /* no chunks at all */
       },
     };

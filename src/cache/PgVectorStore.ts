@@ -2,7 +2,8 @@
 // SQL uses only standard pgvector surface: vector(n) type, <=> (cosine
 // distance), HNSW index with vector_cosine_ops. Verified by contract test on
 // the generated SQL + scripts/semantic-smoke.mjs against a live
-// pgvector-enabled Postgres (local PG here lacks the extension, ADR-006).
+// pgvector-enabled Postgres (local PG here lacks the extension, ADR-005 in
+// agent/implementation.md Part B).
 //
 // Depends on a minimal SqlClient so tests inject a fake and prod passes a
 // node-postgres Pool. Table DDL lives in db/migrations/001_semantic_cache.sql.
@@ -173,8 +174,8 @@ const MIGRATION_TABLE = `CREATE TABLE IF NOT EXISTS semantic_cache (
   UNIQUE (tenant_id, provider, model, prompt_hash)
 )`;
 
-/** Bring a pgvector database to the expected shape. Throws a clear error when
- * the `vector` extension is missing (fail fast at boot, ADR-006). The HNSW
+/** Bring a pgvector database to the expected shape. Throws a clear error when  * the `vector` extension is missing (fail fast at boot, ADR-005 in
+ * agent/implementation.md Part B). The HNSW
  * index is best-effort: without it lookups still work via sequential scan. */
 export async function migrateSemanticCache(db: SqlClient): Promise<void> {
   try {

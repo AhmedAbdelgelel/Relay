@@ -1,7 +1,7 @@
 // infrastructure/config.ts — STANDARDIZATION of all env parsing in one place.
 // Nothing else reads process.env directly.
 
-export type ProviderName = "mock" | "gemini" | "ollama" | "openai" | "anthropic";
+export type ProviderName = "mock" | "gemini" | "ollama" | "openai" | "anthropic" | "openrouter";
 
 export type EmbeddingProviderName = "mock" | "gemini" | "ollama";
 
@@ -22,6 +22,9 @@ export interface GatewayConfig {
   anthropicApiKey: string;
   anthropicBaseUrl: string;
   anthropicModel: string;
+  openRouterKey: string;
+  openRouterBaseUrl: string;
+  openRouterModel: string;
   redisUrl: string;
   cacheTtlSec: number;
   cacheEnabled: boolean;
@@ -61,8 +64,8 @@ function frac(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const provider = (env["PROVIDER"] ?? "mock").toLowerCase() as ProviderName;
-  if (!["mock", "gemini", "ollama", "openai", "anthropic"].includes(provider)) {
-    throw new Error(`PROVIDER must be one of mock|gemini|ollama|openai|anthropic, got "${provider}"`);
+  if (!["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"].includes(provider)) {
+    throw new Error(`PROVIDER must be one of mock|gemini|ollama|openai|anthropic|openrouter, got "${provider}"`);
   }
   const embeddingProvider = (env["EMBEDDING_PROVIDER"] ?? "mock").toLowerCase() as EmbeddingProviderName;
   if (!["mock", "gemini", "ollama"].includes(embeddingProvider)) {
@@ -87,6 +90,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     anthropicApiKey: str(env, "ANTHROPIC_API_KEY"),
     anthropicBaseUrl: str(env, "ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
     anthropicModel: str(env, "ANTHROPIC_MODEL", "claude-4"),
+    // OPEN_ROUTER_KEY is the variable name in the project .env; a key is only
+    // required when PROVIDER=openrouter (free models otherwise need nothing).
+    openRouterKey: str(env, "OPEN_ROUTER_KEY"),
+    openRouterBaseUrl: str(env, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+    openRouterModel: str(env, "OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),
     redisUrl: str(env, "REDIS_URL"),
     cacheTtlSec: num(env, "CACHE_TTL_S", 3600),
     cacheEnabled: bool(env, "CACHE_ENABLED", true),

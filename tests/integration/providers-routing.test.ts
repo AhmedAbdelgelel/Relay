@@ -20,6 +20,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
     openaiModel: "gpt-4o-mini",
     anthropicApiKey: "", anthropicBaseUrl: "https://api.anthropic.com",
     anthropicModel: "claude-4",
+    openRouterKey: "", openRouterBaseUrl: "https://openrouter.ai/api/v1", openRouterModel: "nvidia/nemotron-3-super-120b-a12b:free",
     redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
     embeddingProvider: "mock", embeddingModel: "",
     semanticEnabled: false, semanticThreshold: 0.92, semanticTopK: 3,
@@ -31,6 +32,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
 function stub(name: string, counter: { calls: number }): ProviderAdapter {
   return {
     name,
+    capabilities: { chat: true, streaming: true, tools: false, json: false, systemMessages: true, maxTokens: true },
     async chat(req: ChatRequest, _signal: AbortSignal): Promise<ChatResponse> {
       counter.calls++;
       return {
@@ -58,12 +60,14 @@ describe("providerForModel routing", () => {
     const anthropic = stub("anthropic", { calls: 0 });
     const gemini = stub("gemini", { calls: 0 });
     const ollama = stub("ollama", { calls: 0 });
+    const openrouter = stub("openrouter", { calls: 0 });
     const fallback = stub("mock", { calls: 0 });
     const map = new Map<string, ProviderAdapter>([
       ["openai", openai],
       ["anthropic", anthropic],
       ["gemini", gemini],
       ["ollama", ollama],
+      ["openrouter", openrouter],
       ["mock", fallback],
     ]);
     expect(providerForModel("gpt-4o-mini", map, fallback)).toBe(openai);
@@ -75,6 +79,35 @@ describe("providerForModel routing", () => {
     expect(providerForModel("unknown-model", map, fallback)).toBe(fallback);
   });
 
+  it("routes OpenRouter free-variant and vendor-prefixed models to openrouter", () => {
+    const openrouter = stub("openrouter", { calls: 0 });
+    const fallback = stub("mock", { calls: 0 });
+    const map = new Map<string, ProviderAdapter>([
+      ["openrouter", openrouter],
+      ["mock", fallback],
+    ]);
+    // Verified OpenRouter free IDs (vendor/model:free) and the auto router.
+    expect(providerForModel("qwen/qwen3.8-27b:free", map, fallback)).toBe(openrouter);
+    expect(providerForModel("nvidia/nemotron-3-super-120b-a12b:free", map, fallback)).toBe(openrouter);
+    expect(providerForModel("google/gemma-4-31b-it:free", map, fallback)).toBe(openrouter);
+    expect(providerForModel("openrouter/auto", map, fallback)).toBe(openrouter);
+    // Non-free, non-prefixed ids still fall back.
+    expect(providerForModel("some-model", map, fallback)).toBe(fallback);
+  });
+
+  it("explicit earlier prefixes win over the :free signal (documented precedence)", () => {
+    const openai = stub("openai", { calls: 0 });
+    const openrouter = stub("openrouter", { calls: 0 });
+    const fallback = stub("mock", { calls: 0 });
+    const map = new Map<string, ProviderAdapter>([
+      ["openai", openai],
+      ["openrouter", openrouter],
+      ["mock", fallback],
+    ]);
+    expect(providerForModel("gpt-4o-mini", map, fallback)).toBe(openai);
+    expect(providerForModel("gpt-4o-mini:free", map, fallback)).toBe(openai);
+  });
+
   it("falls back when the routed provider is not configured", () => {
     const fallback = stub("mock", { calls: 0 });
     const map = new Map<string, ProviderAdapter>([["mock", fallback]]);
@@ -84,18 +117,20 @@ describe("providerForModel routing", () => {
 });
 
 describe("createProvidersFromEnv", () => {
-  it("always has mock+ollama; keyed providers only when key present", () => {
+  it("always has mock+ollama+openrouter; keyed providers only when key present", () => {
     const empty = createProvidersFromEnv(cfg());
     expect(empty.has("mock")).toBe(true);
     expect(empty.has("ollama")).toBe(true);
+    expect(empty.has("openrouter")).toBe(true); // free tier needs no key
     expect(empty.has("gemini")).toBe(false);
     expect(empty.has("openai")).toBe(false);
     expect(empty.has("anthropic")).toBe(false);
 
-    const full = createProvidersFromEnv(cfg({ geminiApiKey: "g", openaiApiKey: "o", anthropicApiKey: "a" }));
+    const full = createProvidersFromEnv(cfg({ geminiApiKey: "g", openaiApiKey: "o", anthropicApiKey: "a", openRouterKey: "or" }));
     expect(full.get("gemini")?.name).toBe("gemini");
     expect(full.get("openai")?.name).toBe("openai");
     expect(full.get("anthropic")?.name).toBe("anthropic");
+    expect(full.get("openrouter")?.name).toBe("openrouter");
   });
 });
 
@@ -181,6 +216,27 @@ describe("chat via routed provider", () => {
     const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "gpt-4o-mini", messages: [{ role: "user", content: "hi" }] } });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-provider"]).toBe("mock");
+    await app.close();
+  });
+
+  it("a :free model routes through the gateway to the openrouter adapter", async () => {
+    const app = Fastify();
+    const cache = new InMemoryCache();
+    const counters = { openrouter: { calls: 0 }, mock: { calls: 0 } };
+    const providers = new Map<string, ProviderAdapter>([
+      ["openrouter", stub("openrouter", counters.openrouter)],
+      ["mock", stub("mock", counters.mock)],
+    ]);
+    registerChatRoutes(app, providers.get("mock")!, cfg(), cache, { providers });
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      payload: { model: "qwen/qwen3.8-27b:free", messages: [{ role: "user", content: "hi" }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-provider"]).toBe("openrouter");
+    expect(counters.openrouter.calls).toBe(1);
+    expect(counters.mock.calls).toBe(0);
     await app.close();
   });
 });

@@ -4,12 +4,22 @@
 import type { ChatResponse } from "../domain/types.js";
 import type { ChatRequest } from "../domain/types.js";
 import { GatewayError } from "../domain/types.js";
-import type { ProviderAdapter, StreamChunk } from "./ProviderAdapter.js";
+import type { ProviderAdapter, ProviderCapabilities, StreamChunk } from "./ProviderAdapter.js";
 
 export type MockFailure = "rate_limited" | "server_error" | null;
 
 export class MockProvider implements ProviderAdapter {
   readonly name = "mock";
+  readonly capabilities: ProviderCapabilities = {
+    chat: true,
+    streaming: true,
+    tools: false,
+    json: false,
+    systemMessages: true,
+    // Accepts-and-ignores: the playground UI sends max_tokens by default;
+    // declaring false would 400 it. The declaration is ACCEPTANCE, not usage.
+    maxTokens: true,
+  };
   private delayMs: number;
   private failure: MockFailure;
 

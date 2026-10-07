@@ -20,6 +20,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
     anthropicApiKey: "",
     anthropicBaseUrl: "https://api.anthropic.com",
     anthropicModel: "claude-4",
+    openRouterKey: "", openRouterBaseUrl: "https://openrouter.ai/api/v1", openRouterModel: "nvidia/nemotron-3-super-120b-a12b:free",
     redisUrl: "",
     cacheTtlSec: 3600,
     cacheEnabled: true,

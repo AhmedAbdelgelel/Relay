@@ -14,6 +14,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
     openaiApiKey: "", openaiBaseUrl: "https://api.openai.com/v1",
     openaiModel: "gpt-4o-mini",
     anthropicApiKey: "", anthropicBaseUrl: "https://api.anthropic.com", anthropicModel: "claude-4",
+    openRouterKey: "", openRouterBaseUrl: "https://openrouter.ai/api/v1", openRouterModel: "nvidia/nemotron-3-super-120b-a12b:free",
     redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
     embeddingProvider: "mock", embeddingModel: "",
     semanticEnabled: false, semanticThreshold: 0.92, semanticTopK: 3,

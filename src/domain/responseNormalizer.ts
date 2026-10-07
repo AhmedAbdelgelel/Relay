@@ -1,4 +1,4 @@
-// domain/responseNormalizer.ts — Response Processor (build plan §21).
+// domain/responseNormalizer.ts — Response Processor.
 //
 // Pure text transformation, no I/O, no provider knowledge. Two rules:
 //   1. Deterministic: same input always yields the same output, so the exact

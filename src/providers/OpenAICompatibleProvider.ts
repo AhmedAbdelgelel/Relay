@@ -4,7 +4,7 @@
 
 import type { ChatRequest, ChatResponse, TokenUsage } from "../domain/types.js";
 import { providerHttpError, toGatewayError } from "../infrastructure/errors.js";
-import type { ProviderAdapter, StreamChunk } from "./ProviderAdapter.js";
+import type { ProviderAdapter, ProviderCapabilities, StreamChunk } from "./ProviderAdapter.js";
 
 export interface OpenAICompatibleOpts {
   name: string;
@@ -37,6 +37,14 @@ function readUsage(u?: { prompt_tokens?: number; completion_tokens?: number }): 
 
 export class OpenAICompatibleProvider implements ProviderAdapter {
   readonly name: string;
+  readonly capabilities: ProviderCapabilities = {
+    chat: true,
+    streaming: true,
+    tools: false,
+    json: false,
+    systemMessages: true,
+    maxTokens: true,
+  };
   private baseURL: string;
   private apiKey: string;
   private defaultModel: string;

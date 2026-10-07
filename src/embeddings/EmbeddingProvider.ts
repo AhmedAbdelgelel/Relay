@@ -19,7 +19,7 @@ export interface EmbeddingProvider {
 
 /** Canonical text that gets embedded: role-tagged, trimmed message lines in
  * order. System prompts included — different instructions must embed
- * differently (Similarity != Equivalence, build plan §1). */
+ * differently (Similarity != Equivalence, see agent/implementation.md Part A). */
 export function promptTextForEmbedding(req: ChatRequest): string {
   return req.messages.map((m) => `${m.role}: ${m.content.trim()}`).join("\n");
 }

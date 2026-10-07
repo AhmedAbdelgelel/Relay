@@ -18,6 +18,7 @@ import { log } from "../../infrastructure/logger.js";
 import { metrics } from "../../observability/metrics.js";
 import { isReusableSemantic } from "../../policy/reuse.js";
 import type { ProviderAdapter } from "../../providers/ProviderAdapter.js";
+import { missingCapabilities } from "../../providers/capabilities.js";
 import { providerForModel } from "../../providers/factory.js";
 
 const BodySchema = z.object({
@@ -90,6 +91,18 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     // Otherwise use the single injected provider (backward compatible).
     const active: ProviderAdapter = deps.providers ? providerForModel(req.model, deps.providers, provider) : provider;
 
+    // T8 capability gate: consult the selected adapter's declared feature set
+    // BEFORE dispatch. An undeclared capability -> explicit 400, INV-1 holds
+    // (provider never called, cache never touched — this sits inside the
+    // validated branch, before lookups), and the failure is loud instead of a
+    // silent adapter degradation.
+    const missing = missingCapabilities(req, active.capabilities);
+    if (missing.length > 0) {
+      const msg = `provider '${active.name}' does not support: ${missing.join(", ")}`;
+      log({ request_id: requestId, provider: active.name, status: 400, error_code: "unsupported_capability" });
+      return reply.status(400).send({ error: { code: "unsupported_capability", message: msg, request_id: requestId } });
+    }
+
     // D3: hash the canonical request for EVERY validated request and echo it as
     // x-cache-hash. This is the client's proof of why a call HIT or MISSED (and
     // for stream:BYPASS, the key it *would* have used). sha256 of canonical JSON
@@ -99,7 +112,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     const { key: cacheKey, hash: cacheHash } = buildExactCacheKey(active.name, req);
     reply.header("x-cache-hash", cacheHash);
 
-    // 2. Timeout + client-abort share one AbortController (see docs/experiments/day01-provider-timeout.md).
+    // 2. Timeout + client-abort share one AbortController.
     // NOTE: never use `request.raw 'close'` here — Node emits it when the request
     // body is fully read too, which aborted every upstream call at ~100ms (found live
     // with Gemini). The response socket is the correct signal: `writableEnded` is
@@ -155,7 +168,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             log({ request_id: requestId, provider: active.name, cache: "lookup-failed-miss", error: (err as Error)?.message ?? String(err) });
           }
         }
-        // --- L2 semantic lookup (build plan §21: Exact MISS -> Semantic -> Policy).
+        // --- L2 semantic lookup (Exact MISS -> Semantic -> Policy).
         // Non-stream only, like exact. Degrades to MISS on any failure, never 5xx.
         // Modular monolith: api/ depends on ports only (SemanticCacheStore,
         // EmbeddingProvider) + pure policy/isReusableSemantic. No SDK here.
@@ -213,7 +226,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
           try {
             const raw = await active.chat(req, upstream.signal);
             metrics.observeProviderLatency(Date.now() - pt0);
-            // Response Processor (build plan §21): strip presentation markup
+            // Response Processor: strip presentation markup
             // BEFORE the caches see it, so an exact hit and a semantic hit both
             // return the same clean text and stored blobs stay canonical.
             const out: ChatResponse = { ...raw, content: normalizeChatContent(raw.content) };

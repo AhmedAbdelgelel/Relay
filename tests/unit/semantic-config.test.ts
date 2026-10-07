@@ -31,6 +31,18 @@ describe("semantic config + factory", () => {
     expect(() => loadConfig(env({ SEMANTIC_STORE: "redis" }))).toThrow(/SEMANTIC_STORE/);
   });
 
+  it("openrouter: PROVIDER accepted, defaults are OpenAI-wire + a verified :free model", () => {
+    const c = loadConfig(env({ PROVIDER: "openrouter" }));
+    expect(c.provider).toBe("openrouter");
+    expect(c.openRouterBaseUrl).toBe("https://openrouter.ai/api/v1");
+    expect(c.openRouterModel).toBe("nvidia/nemotron-3-super-120b-a12b:free");
+    expect(c.openRouterKey).toBe("");
+  });
+
+  it("openrouter key env var is OPEN_ROUTER_KEY (project .env convention)", () => {
+    expect(loadConfig(env({ PROVIDER: "openrouter", OPEN_ROUTER_KEY: "sk-or-test" })).openRouterKey).toBe("sk-or-test");
+  });
+
   it("disabled semantic returns undefined (no store)", async () => {
     const c = loadConfig(env({ SEMANTIC_ENABLED: "0" }));
     await expect(createSemanticStoreFromEnv(c)).resolves.toBeUndefined();

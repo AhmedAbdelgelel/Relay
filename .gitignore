@@ -1,8 +1,6 @@
-# docs — ignore every docs folder
-docs/
-**/docs/
+# agent/ is the canonical spec (implementation.md / loop.md / tests.md / review.md) — TRACK it
 
-# env — secrets, never push (keep .env.example tracked)
+# env — secrets, never commit (keep .env.example tracked)
 .env
 .env.local
 .env.*.local

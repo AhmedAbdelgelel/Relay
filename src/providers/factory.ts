@@ -46,6 +46,17 @@ export function createProviderFromEnv(cfg: GatewayConfig, mockOverrides?: { dela
         defaultModel: cfg.anthropicModel,
       });
     }
+    case "openrouter": {
+      // OpenRouter speaks the OpenAI wire format (POST {base}/chat/completions,
+      // Bearer auth, SSE + [DONE]) — reuse the standardized adapter (T-OR-1).
+      // The free tier needs no key, so none is demanded here.
+      return new OpenAICompatibleProvider({
+        name: "openrouter",
+        baseURL: cfg.openRouterBaseUrl,
+        apiKey: cfg.openRouterKey,
+        defaultModel: cfg.openRouterModel,
+      });
+    }
   }
 }
 
@@ -84,11 +95,23 @@ export function createProvidersFromEnv(cfg: GatewayConfig): Map<string, Provider
       defaultModel: cfg.anthropicModel,
     }));
   }
+  // OpenRouter always registered: the free tier needs no key, so routing to a
+  // :free model must work with zero setup. Keyed models still need OPEN_ROUTER_KEY.
+  map.set("openrouter", new OpenAICompatibleProvider({
+    name: "openrouter",
+    baseURL: cfg.openRouterBaseUrl,
+    apiKey: cfg.openRouterKey,
+    defaultModel: cfg.openRouterModel,
+  }));
   return map;
 }
 
 // Model-prefix routing: gpt-* -> openai, claude-* -> anthropic,
 // gemini-* -> gemini, llama*/nomic* -> ollama, else fallback.
+// OpenRouter signals (checked last, before the fallback):
+//   - explicit `openrouter/` vendor prefix (e.g. openrouter/qwen/...)
+//   - the `:free` suffix (an OpenRouter free-variant signal that collides with
+//     no other provider) — so `qwen/qwen3.8-27b:free` routes there directly.
 export function providerForModel(
   model: string,
   providers: Map<string, ProviderAdapter>,
@@ -107,6 +130,9 @@ export function providerForModel(
     if (p) return p;
   } else if (m.startsWith("llama") || m.startsWith("nomic")) {
     const p = pick("ollama");
+    if (p) return p;
+  } else if (m.startsWith("openrouter/") || m.endsWith(":free")) {
+    const p = pick("openrouter");
     if (p) return p;
   }
   return fallback;

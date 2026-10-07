@@ -1,6 +1,6 @@
 // server.ts — composition root. Only file allowed to wire config -> provider -> routes.
 // CHOOSING happens here via createProviderFromEnv; routes never choose.
-// Modular monolith (build plan §5): src/api depends on ports only;
+// Modular monolith: src/api depends on ports only;
 // this file owns all `new` for cache / embedder / vector store (except the
 // *Factory helpers it delegates to).
 
@@ -48,7 +48,7 @@ export async function buildServerAsync() {
 }
 
 const isMain = process.argv[1]?.endsWith("server.ts") || process.argv[1]?.endsWith("server.js");
-// Do not auto-listen when imported by vitest (loop.md: tests must boot via buildServer + inject).
+// Do not auto-listen when imported by vitest (agent/implementation.md: tests must boot via buildServer + inject).
 if (isMain && !process.env.VITEST) {
   buildServerAsync().then(({ app, cfg, provider, cache, semanticStore }) => {
     app.listen({ port: cfg.port, host: "0.0.0.0" }, (err, address) => {
