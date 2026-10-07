@@ -717,6 +717,230 @@ T14 (lands before eval so T15 defends final reuse semantics).
 
 ---
 
+## T17 - Exact cache must not admit empty responses (INV-8 gap)
+
+Status: pending
+
+### Goal
+
+Close the live-proven INV-8 gap: empty provider responses enter the exact cache and are served as HITs, while the semantic path already refuses them.
+
+### Requirements
+
+1. Gate the exact-cache write on non-empty normalized content (`trim() !== ""`), mirroring the semantic admission guard.
+2. An empty upstream reply is still served to the caller once (200) but never stored; the next identical request re-calls the provider.
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Response normalizer / Exact cache; INV-8.
+
+### Files
+
+`src/api/routes/chat.ts` (admission block); regression test in `tests/cache-eval.test.ts` or `tests/integration/exact-cache.test.ts`.
+
+### Acceptance Criteria
+
+- Provider returns empty content → 200 once, repeat is MISS (not HIT), provider called twice.
+- Non-empty admission behavior unchanged (existing suites green).
+
+### Testing Requirements
+
+- New regression test: empty-content admission attempt → MISS on repeat + 2 provider calls.
+- Full offline suite + typecheck green.
+
+### Dependencies
+
+None — correctness bugfix, blocks shipping.
+
+---
+
+## T18 - Live re-verification after quota reset (semantic + TTL legs)
+
+Status: pending
+
+### Goal
+
+Prove the semantic path against a real upstream (not just doubles): paraphrase HIT with measured similarity, TTL expiry on both stores.
+
+### Requirements
+
+1. Restart eval gateway on :3001 (`PROVIDER` with budget, `EMBEDDING_PROVIDER=gemini`, `SEMANTIC_THRESHOLD=0.80`).
+2. Semantic leg: seed → paraphrase SEMANTIC_HIT (record similarity) → temp drift MISS → unrelated MISS → other-tenant MISS.
+3. Restart with `CACHE_TTL_S=3` + `SEMANTIC_TTL_S=3`; TTL leg: HIT→expiry→MISS on both stores.
+4. Respect free-tier quotas (pace calls ≥15s; stop on 429, resume after reset).
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Semantic cache / Request Flow; T15 live-leg criteria.
+
+### Files
+
+No repo changes. Temp runner in system Temp dir (deleted after); gateway stopped after.
+
+### Acceptance Criteria
+
+- B2 SEMANTIC_HIT with recorded similarity (expect ~0.96 class); B2b/B3/B4 all MISS.
+- C1/C2 HIT then C3/C4 MISS after expiry.
+- Evidence (statuses/headers/similarities) reported to owner, no commit.
+
+### Testing Requirements
+
+- Live legs only; offline suite untouched and still green.
+
+### Dependencies
+
+T17 (empty-admission fix lands first so live legs measure correct behavior); external: upstream quota reset.
+
+---
+
+## T19 - Push local commits to remote
+
+Status: pending
+
+### Goal
+
+Remote holds exactly what is verified locally; no work ships from a local-only tree.
+
+### Requirements
+
+1. Verify remote state (`git fetch`, compare `main` vs origin).
+2. Push committed work only (no uncommitted changes ride along).
+3. Confirm remote HEAD matches local after push.
+
+### Related Architecture
+
+None (release hygiene).
+
+### Files
+
+No repo changes (git operations only).
+
+### Acceptance Criteria
+
+- `git status` clean; origin/main equals local HEAD; proof shown (`git log -1 --stat` + status).
+
+### Testing Requirements
+
+- None beyond the already-green suite on the pushed commit.
+
+### Dependencies
+
+None — do any time; do before any deploy.
+
+---
+
+## T20 - README + .env.example + LICENSE
+
+Status: pending
+
+### Goal
+
+A stranger can run the gateway without reading source: what it is, how to start it, what to configure, under what license.
+
+### Requirements
+
+1. `README.md`: goal, quickstart (`npm install/dev`), endpoints table, env overview (link `.env.example`), cache behavior summary, known limits pointer.
+2. `.env.example`: every variable from `src/infrastructure/config.ts` with defaults commented, zero secrets.
+3. `LICENSE`: owner-chosen license file.
+
+### Related Architecture
+
+`agent/implementation.md` Part A (Goal/Problem/Features); Part B → Interfaces/Contracts.
+
+### Files
+
+New `README.md`, `.env.example`, `LICENSE` at repo root. No code changes.
+
+### Acceptance Criteria
+
+- Fresh checkout + `.env.example` copied to `.env` + `npm run dev` serves `/health` (reviewer verifies by following README literally).
+- Every config key appears in `.env.example`; no real secrets anywhere in the three files.
+
+### Testing Requirements
+
+- Docs-only; reviewer runs the README quickstart verbatim.
+
+### Dependencies
+
+None.
+
+---
+
+## T21 - Dockerfile + CI workflow
+
+Status: pending
+
+### Goal
+
+Reproducible image and a CI gate so `main` never goes red silently.
+
+### Requirements
+
+1. `Dockerfile`: Node build (`npm ci`, `tsc` build) + minimal runtime (`node dist/`), non-root user, `PORT` honored, healthcheck on `/health`.
+2. `.github/workflows/ci.yml`: on push/PR — `npm ci`, `npm run typecheck`, offline `npm test` (no keys in env).
+3. Optional `.dockerignore` (node_modules, .env, logs).
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Composition root; runbook commands.
+
+### Files
+
+New `Dockerfile`, `.github/workflows/ci.yml` (+ `.dockerignore`) at root. No app-code changes.
+
+### Acceptance Criteria
+
+- `docker build` succeeds; container boots and `/health` returns ok.
+- CI passes on the commit (reviewer checks the workflow run, not a local claim).
+
+### Testing Requirements
+
+- CI run green; image boot + `/health` verified.
+
+### Dependencies
+
+T20 (README documents the Docker/CI flow).
+
+---
+
+## T22 - Auth posture + documented shipping limits
+
+Status: blocked
+
+### Goal
+
+No accidental open gateway: either gate access or explicitly document the exposure contract plus known limits.
+
+### Requirements
+
+1. Owner picks a mode first (this task is blocked until then):
+   - **Token mode**: `GATEWAY_API_KEY` env; `401` without matching `Authorization: Bearer`; key never logged; `/health` stays public for probes.
+   - **Documented mode**: bind guidance (localhost/reverse-proxy auth), prominent exposure warning in README, known-limits section (no fallback/breaker, store-layer-only tenant isolation, in-memory metrics reset, pgvector live-untested).
+2. Implement the chosen mode only — no hybrid scope creep.
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Security Considerations; Interfaces/Contracts.
+
+### Files
+
+Token mode: request-auth check in `src/api/routes/chat.ts` + tests. Documented mode: `README.md` sections only.
+
+### Acceptance Criteria
+
+- Token mode: missing/wrong key → `401` (no provider call); correct key flows normally; health probe unaffected.
+- Documented mode: README carries the exposure warning + limits; reviewer confirms no code path contradicts them.
+
+### Testing Requirements
+
+- Token mode: 401/200 contract + integration tests. Documented mode: reviewer reads the sections.
+
+### Dependencies
+
+Blocked on owner mode choice. Then T20 (README carries the outcome).
+
+---
+
 # Runbook (run, configure, observe)
 
 > Behavior contracts live in `agent/implementation.md` Part B; scope/success in Part A.

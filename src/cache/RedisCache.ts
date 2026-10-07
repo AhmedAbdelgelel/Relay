@@ -4,20 +4,36 @@ import type { CacheRepository } from "./CacheRepository.js";
 export interface RedisCacheOpts {
   url: string;
   commandTimeoutMs?: number;
+  /** Test seam: inject a compatible client instead of opening a connection. */
+  client?: RedisCommands;
+}
+
+/** Minimal command surface RedisCache uses (the real client satisfies this). */
+export interface RedisCommands {
+  readonly status: string;
+  on(event: string, listener: () => void): unknown;
+  connect(): Promise<unknown>;
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, mode: string, ttlSeconds: number): Promise<unknown>;
+  del(key: string): Promise<number>;
+  ping(): Promise<string>;
+  disconnect(): void;
 }
 
 export class RedisCache implements CacheRepository {
   readonly name = "redis";
-  private client: Redis;
+  private client: RedisCommands;
 
   constructor(opts: RedisCacheOpts) {
-    this.client = new Redis(opts.url, {
-      lazyConnect: true,
-      enableOfflineQueue: false,
-      maxRetriesPerRequest: 1,
-      commandTimeout: opts.commandTimeoutMs ?? 500,
-      retryStrategy: (times: number) => (times > 2 ? null : Math.min(times * 100, 500)),
-    });
+    this.client =
+      opts.client ??
+      new Redis(opts.url, {
+        lazyConnect: true,
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+        commandTimeout: opts.commandTimeoutMs ?? 500,
+        retryStrategy: (times: number) => (times > 2 ? null : Math.min(times * 100, 500)),
+      });
     this.client.on("error", () => undefined);
   }
 
