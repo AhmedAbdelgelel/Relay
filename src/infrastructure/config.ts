@@ -43,6 +43,7 @@ export interface GatewayConfig {
   semanticTtlSec: number;
   semanticStore: SemanticStoreName;
   databaseUrl: string;
+  savedUsdPer1kTokens: number;
   gatewayApiKeys: SeedApiKey[];
   credEncKey: string;
 }
@@ -69,6 +70,13 @@ function frac(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   if (!raw) return fallback;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 && n < 1 ? n : fallback;
+}
+
+function nonNegative(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 const PROVIDER_NAMES: ProviderName[] = ["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"];
@@ -144,6 +152,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     semanticTtlSec: num(env, "SEMANTIC_TTL_S", 3600),
     semanticStore,
     databaseUrl,
+    savedUsdPer1kTokens: nonNegative(env, "SAVED_USD_PER_1K_TOKENS", 0),
     gatewayApiKeys: seedApiKeys(str(env, "GATEWAY_API_KEYS")),
     credEncKey,
   };

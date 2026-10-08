@@ -31,6 +31,13 @@ describe("semantic config + factory", () => {
     expect(() => loadConfig(env({ SEMANTIC_STORE: "redis" }))).toThrow(/SEMANTIC_STORE/);
   });
 
+  it("parses the savings rate, defaulting to 0 (savings off)", () => {
+    expect(loadConfig(env({})).savedUsdPer1kTokens).toBe(0);
+    expect(loadConfig(env({ SAVED_USD_PER_1K_TOKENS: "0.002" })).savedUsdPer1kTokens).toBeCloseTo(0.002);
+    expect(loadConfig(env({ SAVED_USD_PER_1K_TOKENS: "-1" })).savedUsdPer1kTokens).toBe(0);
+    expect(loadConfig(env({ SAVED_USD_PER_1K_TOKENS: "abc" })).savedUsdPer1kTokens).toBe(0);
+  });
+
   it("openrouter: PROVIDER accepted, defaults are OpenAI-wire + a verified :free model", () => {
     const c = loadConfig(env({ PROVIDER: "openrouter" }));
     expect(c.provider).toBe("openrouter");
@@ -83,5 +90,36 @@ describe("GatewayMetrics semantic counters", () => {
     const s = m.snapshot();
     expect(s.semantic_errors).toBe(0);
     expect(s.semantic_lookups).toBe(0);
+  });
+
+  it("histogram buckets served similarities; savings track hits at configured rate", () => {
+    const m = new GatewayMetrics();
+    m.observeSemanticScore(0.99);
+    m.observeSemanticScore(0.93);
+    m.observeSemanticScore(0.91);
+    m.observeSemanticScore(0.85);
+    const s = m.snapshot();
+    expect(s.semantic_hist_gte_095).toBe(1);
+    expect(s.semantic_hist_092_095).toBe(1);
+    expect(s.semantic_hist_090_092).toBe(1);
+    expect(s.semantic_hist_lt_090).toBe(1);
+    m.observeTokens(100, 50);
+    m.observeSaved(100, 50, 0.002);
+    const s2 = m.snapshot();
+    expect(s2.tokens_in).toBe(100);
+    expect(s2.tokens_out).toBe(50);
+    expect(s2.estimated_cost_saved).toBeCloseTo(0.0003);
+  });
+
+  it("savings stay zero without a rate or without reported usage", () => {
+    const m = new GatewayMetrics();
+    m.observeSaved(100, 50, 0);
+    m.observeTokens(0, 0);
+    const s = m.snapshot();
+    expect(s.estimated_cost_saved).toBe(0);
+    expect(s.tokens_in).toBe(0);
+    expect(s.tokens_out).toBe(0);
+    m.observeSaved(-5, 10, 0.002);
+    expect(m.snapshot().estimated_cost_saved).toBeCloseTo(0.00002);
   });
 });

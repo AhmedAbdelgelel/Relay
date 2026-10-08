@@ -32,6 +32,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
     semanticTtlSec: 3600,
     semanticStore: "memory",
     databaseUrl: "",
+    savedUsdPer1kTokens: 0,
     gatewayApiKeys: [],
     credEncKey: "",
     ...over,

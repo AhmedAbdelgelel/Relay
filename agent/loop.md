@@ -613,7 +613,7 @@ T8 (conformance suite proves adapters behave uniformly before routing depends on
 
 ## T15 - Eval harness + threshold defense + cost metrics
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -1179,6 +1179,8 @@ Semantic cache:
 - `EMBEDDING_PROVIDER` — `mock | gemini | ollama` (default `mock`), `EMBEDDING_MODEL`
 - `DATABASE_URL` (required for `SEMANTIC_STORE=pgvector`; schema applied automatically at
   boot from `db/migrations/001_semantic_cache.sql`)
+- `SAVED_USD_PER_1K_TOKENS` (default `0` = savings off; set to price reused tokens,
+  e.g. `0.002` — drives `estimated_cost_saved`)
 
 Auth:
 
@@ -1203,11 +1205,12 @@ Counters: `requests_total`, `exact_hits`, `exact_misses`, `singleflight_leaders`
 `singleflight_coalesced`, `provider_requests`, `provider_errors`, `cache_lookup_failed`,
 `cache_write_failed`, `semantic_hits`, `semantic_misses`, `semantic_errors`,
 `fallback_count`, `breaker_open` (gauge: breakers open right now),
-`auth_rejects_total`.
+`tokens_in`, `tokens_out`, `estimated_cost_saved` (needs `SAVED_USD_PER_1K_TOKENS`),
+`semantic_hist_lt_090`, `semantic_hist_090_092`, `semantic_hist_092_095`,
+`semantic_hist_gte_095`, `auth_rejects_total`.
 
-> T15 will extend this snapshot further (`semantic similarity` already tracked via
-> `avg_semantic_score`; histogram, token + cost accounting planned — see T15 above;
-> fallback/breaker counters already live via T14).
+> Token + cost accounting is live (histogram, token + savings counters above);
+> the T15 threshold decision itself stays eval-gated (see T15 above).
 
 Derived: `semantic_lookups`, `avg_semantic_score`, `cache_lookups`, `avg_cache_lookup_ms`,
 `provider_latency_ms_total`, `avg_provider_ms`, `hit_rate`, `provider_calls_avoided`.

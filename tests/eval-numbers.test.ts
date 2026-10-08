@@ -29,7 +29,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
     redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
     embeddingProvider: "mock", embeddingModel: "",
     semanticEnabled: true, semanticThreshold: 0.92, semanticTopK: 3,
-    semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "", gatewayApiKeys: [], credEncKey: "",
+    semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "", gatewayApiKeys: [], credEncKey: "", savedUsdPer1kTokens: 0,
     ...over,
   };
 }
@@ -60,11 +60,23 @@ class ControlledEmbedder implements EmbeddingProvider {
   }
 }
 
-interface Fixture { name: string; family: "paraphrase" | "near-miss" | "topical" | "unrelated"; sim: number; mustHit: boolean }
+interface Fixture {
+  name: string;
+  family: "duplicate" | "paraphrase" | "near-miss" | "topical" | "cross-domain" | "system-change" | "tenant-change" | "unrelated";
+  sim: number;
+  mustHit: boolean;
+  system?: string[];
+  tenant?: string;
+}
 
 // Labeled set: positives clear the 0.92 bar with margin; the hardest
 // must-MISS sits at 0.91 so the 0.90/0.92 boundary is directly probed.
+// system-change / tenant-change carry HIGH similarity but must MISS via the
+// policy gates (defense in depth over retrieval).
 const FIXTURES: Fixture[] = [
+  { name: "dup-1", family: "duplicate", sim: 1.0, mustHit: true },
+  { name: "dup-2", family: "duplicate", sim: 1.0, mustHit: true },
+  { name: "dup-3", family: "duplicate", sim: 1.0, mustHit: true },
   { name: "para-1", family: "paraphrase", sim: 0.99, mustHit: true },
   { name: "para-2", family: "paraphrase", sim: 0.97, mustHit: true },
   { name: "para-3", family: "paraphrase", sim: 0.95, mustHit: true },
@@ -76,6 +88,15 @@ const FIXTURES: Fixture[] = [
   { name: "top-1", family: "topical", sim: 0.8, mustHit: false },
   { name: "top-2", family: "topical", sim: 0.75, mustHit: false },
   { name: "top-3", family: "topical", sim: 0.7, mustHit: false },
+  { name: "cross-1", family: "cross-domain", sim: 0.5, mustHit: false },
+  { name: "cross-2", family: "cross-domain", sim: 0.4, mustHit: false },
+  { name: "cross-3", family: "cross-domain", sim: 0.3, mustHit: false },
+  { name: "sys-1", family: "system-change", sim: 0.97, mustHit: false, system: ["other-instructions"] },
+  { name: "sys-2", family: "system-change", sim: 0.96, mustHit: false, system: ["other-instructions"] },
+  { name: "sys-3", family: "system-change", sim: 0.95, mustHit: false, system: ["other-instructions"] },
+  { name: "ten-1", family: "tenant-change", sim: 0.97, mustHit: false, tenant: "other" },
+  { name: "ten-2", family: "tenant-change", sim: 0.96, mustHit: false, tenant: "other" },
+  { name: "ten-3", family: "tenant-change", sim: 0.95, mustHit: false, tenant: "other" },
   { name: "neg-1", family: "unrelated", sim: 0.1, mustHit: false },
   { name: "neg-2", family: "unrelated", sim: 0.05, mustHit: false },
   { name: "neg-3", family: "unrelated", sim: 0.0, mustHit: false },
@@ -93,43 +114,51 @@ async function seed(store: InMemoryVectorStore): Promise<void> {
   });
 }
 
-interface SweepPoint { threshold: number; tp: number; fp: number; fn: number; tn: number; precision: number; recall: number }
+interface SweepPoint { threshold: number; tp: number; fp: number; fn: number; tn: number; precision: number; recall: number; perFamily: Record<string, { tp: number; fp: number; fn: number; tn: number }> }
 
 async function sweep(store: InMemoryVectorStore, thresholds: number[]): Promise<SweepPoint[]> {
   const out: SweepPoint[] = [];
   for (const threshold of thresholds) {
     let tp = 0, fp = 0, fn = 0, tn = 0;
+    const perFamily: Record<string, { tp: number; fp: number; fn: number; tn: number }> = {};
     for (const f of FIXTURES) {
       const vec = await new ControlledEmbedder().embed(`cos:${f.sim}`, new AbortController().signal);
       const cands = await store.findSimilar(vec, FILTER, { threshold, topK: 3 });
-      // Retrieval hit + policy gate (production path, in order).
+      // Retrieval hit + policy gate (production path, in order). System and
+      // tenant vary per fixture to exercise the T16 gates end to end.
+      const messages: { role: "user" | "system"; content: string }[] = [
+        ...(f.system ?? []).map((s) => ({ role: "system" as const, content: s })),
+        { role: "user" as const, content: "q" },
+      ];
+      const tenant = f.tenant ?? "default";
       let reused = false;
       for (const hit of cands) {
         const d = isReusableSemantic(
-          { model: "m", messages: [{ role: "user" as const, content: "q" }], temperature: 1.0, stream: false },
+          { model: "m", messages, temperature: 1.0, stream: false },
           { ...hit, temperature: 1.0, maxTokens: undefined },
-          { provider: "mock", threshold, tenant: "default" },
+          { provider: "mock", threshold, tenant },
         );
         if (d.reusable) { reused = true; break; }
       }
-      if (reused && f.mustHit) tp++;
-      else if (reused && !f.mustHit) fp++;
-      else if (!reused && f.mustHit) fn++;
-      else tn++;
+      const fam = (perFamily[f.family] ??= { tp: 0, fp: 0, fn: 0, tn: 0 });
+      if (reused && f.mustHit) { tp++; fam.tp++; }
+      else if (reused && !f.mustHit) { fp++; fam.fp++; }
+      else if (!reused && f.mustHit) { fn++; fam.fn++; }
+      else { tn++; fam.tn++; }
     }
     const precision = tp + fp === 0 ? 1 : tp / (tp + fp);
     const recall = tp + fn === 0 ? 1 : tp / (tp + fn);
-    out.push({ threshold, tp, fp, fn, tn, precision, recall });
+    out.push({ threshold, tp, fp, fn, tn, precision, recall, perFamily });
   }
   return out;
 }
 
 describe("threshold sweep (real store + real policy, labeled synthetic set)", () => {
   it(`dataset ${DATASET_VERSION} is labeled with minimum family counts`, () => {
-    for (const family of ["paraphrase", "near-miss", "topical", "unrelated"] as const) {
+    for (const family of ["duplicate", "paraphrase", "near-miss", "topical", "cross-domain", "system-change", "tenant-change", "unrelated"] as const) {
       expect(FIXTURES.filter((f) => f.family === family).length).toBeGreaterThanOrEqual(3);
     }
-    expect(FIXTURES.every((f) => f.name && typeof f.mustHit === "boolean")).toBe(true);
+    expect(FIXTURES.every((f) => f.name && typeof f.mustHit === "boolean" && typeof f.sim === "number")).toBe(true);
   });
 
   it("sweep 0.60->0.95 is deterministic across runs (seeded, no I/O)", async () => {
@@ -157,8 +186,14 @@ describe("threshold sweep (real store + real policy, labeled synthetic set)", ()
     expect(at92.fp).toBe(0);
     expect(at92.recall).toBe(1);
     expect(at92.precision).toBe(1);
+    for (const [fam, r] of Object.entries(at92.perFamily)) {
+      expect(r.fp, `family ${fam}`).toBe(0);
+    }
+    expect(at92.perFamily["duplicate"]!.tp).toBe(3);
+    expect(at92.perFamily["paraphrase"]!.tp).toBe(4);
     const at90 = points.find((p) => p.threshold === 0.9)!;
     expect(at90.fp).toBeGreaterThanOrEqual(1);
+    expect(at90.perFamily["near-miss"]!.fp).toBeGreaterThanOrEqual(1);
   });
 });
 

@@ -198,6 +198,7 @@ describe("provider types", () => {
       semanticTtlSec: 3600,
       semanticStore: "memory",
       databaseUrl: "",
+    savedUsdPer1kTokens: 0,
       gatewayApiKeys: [],
       credEncKey: "",
     };

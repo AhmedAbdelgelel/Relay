@@ -148,6 +148,10 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
                 if (typeof cached.content !== "string" || typeof cached.model !== "string") throw new Error("bad shape");
                 const latency = Date.now() - start;
                 metrics.inc("exact_hits");
+                if (cached.usage) {
+                  metrics.observeTokens(cached.usage.prompt_tokens, cached.usage.completion_tokens);
+                  metrics.observeSaved(cached.usage.prompt_tokens, cached.usage.completion_tokens, cfg.savedUsdPer1kTokens);
+                }
                 const servingName = lt.adapter.name;
                 reply.header("x-provider", servingName);
                 reply.header("x-latency-ms", String(latency));
@@ -198,6 +202,10 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
               const latency = Date.now() - start;
               metrics.inc("semantic_hits");
               metrics.observeSemanticScore(hit.similarity);
+              if (hit.usage) {
+                metrics.observeTokens(hit.usage.prompt_tokens, hit.usage.completion_tokens);
+                metrics.observeSaved(hit.usage.prompt_tokens, hit.usage.completion_tokens, cfg.savedUsdPer1kTokens);
+              }
               await deps.semanticStore!.recordHit(hit.id).catch(() => undefined);
               reply.header("x-provider", active.name);
               reply.header("x-latency-ms", String(latency));
@@ -310,6 +318,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         reply.header("x-cache", useCache ? "MISS" : "DISABLED");
         reply.header("x-coalesced", wasCoalesced ? "true" : "false");
         if (didFallback) reply.header("x-fallback", "true");
+        if (out.usage) metrics.observeTokens(out.usage.prompt_tokens, out.usage.completion_tokens);
         log({ request_id: requestId, provider: servingName, status: 200, latency_ms: latency, stream: false, cache: useCache ? "miss" : "disabled", coalesced: wasCoalesced });
         return reply.send({
           id: out.id,
@@ -423,7 +432,10 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         safeWrite(`data: ${JSON.stringify({ id: streamId, model: req.model, choices: [{ delta: { content: tail } }] })}\n\n`);
       }
       // D1: terminal usage frame, so streamed replies carry real token numbers.
-      if (usage) safeWrite(`data: ${JSON.stringify({ id: streamId, model: req.model, choices: [], usage })}\n\n`);
+      if (usage) {
+        metrics.observeTokens(usage.prompt_tokens, usage.completion_tokens);
+        safeWrite(`data: ${JSON.stringify({ id: streamId, model: req.model, choices: [], usage })}\n\n`);
+      }
       safeWrite("data: [DONE]\n\n");
       try {
         if (headWritten && !reply.raw.writableEnded) reply.raw.end();

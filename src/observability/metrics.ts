@@ -17,6 +17,13 @@ export interface MetricsSnapshot {
   semantic_errors: number;
   fallback_count: number;
   breaker_open: number;
+  tokens_in: number;
+  tokens_out: number;
+  estimated_cost_saved: number;
+  semantic_hist_lt_090: number;
+  semantic_hist_090_092: number;
+  semantic_hist_092_095: number;
+  semantic_hist_gte_095: number;
   semantic_lookups: number;
   avg_semantic_score: number;
   cache_lookups: number;
@@ -44,6 +51,13 @@ const ZERO: MetricsSnapshot = {
   semantic_errors: 0,
   fallback_count: 0,
   breaker_open: 0,
+  tokens_in: 0,
+  tokens_out: 0,
+  estimated_cost_saved: 0,
+  semantic_hist_lt_090: 0,
+  semantic_hist_090_092: 0,
+  semantic_hist_092_095: 0,
+  semantic_hist_gte_095: 0,
   semantic_lookups: 0,
   avg_semantic_score: 0,
   cache_lookups: 0,
@@ -69,7 +83,14 @@ export type CounterName =
   | "semantic_misses"
   | "semantic_errors"
   | "fallback_count"
-  | "breaker_open";
+  | "breaker_open"
+  | "tokens_in"
+  | "tokens_out"
+  | "estimated_cost_saved"
+  | "semantic_hist_lt_090"
+  | "semantic_hist_090_092"
+  | "semantic_hist_092_095"
+  | "semantic_hist_gte_095";
 
 export class GatewayMetrics {
   private c: Record<CounterName, number> = {
@@ -87,6 +108,13 @@ export class GatewayMetrics {
     semantic_errors: 0,
     fallback_count: 0,
     breaker_open: 0,
+    tokens_in: 0,
+    tokens_out: 0,
+    estimated_cost_saved: 0,
+    semantic_hist_lt_090: 0,
+    semantic_hist_090_092: 0,
+    semantic_hist_092_095: 0,
+    semantic_hist_gte_095: 0,
   };
   private cacheLookups = 0;
   private cacheLatencyTotal = 0;
@@ -110,6 +138,22 @@ export class GatewayMetrics {
   observeSemanticScore(similarity: number): void {
     this.semanticScoreTotal += similarity;
     this.semanticScored++;
+    if (!(similarity >= 0)) return;
+    if (similarity < 0.9) this.c.semantic_hist_lt_090++;
+    else if (similarity < 0.92) this.c.semantic_hist_090_092++;
+    else if (similarity < 0.95) this.c.semantic_hist_092_095++;
+    else this.c.semantic_hist_gte_095++;
+  }
+
+  observeTokens(promptTokens: number, completionTokens: number): void {
+    if (promptTokens > 0) this.c.tokens_in += Math.floor(promptTokens);
+    if (completionTokens > 0) this.c.tokens_out += Math.floor(completionTokens);
+  }
+
+  observeSaved(promptTokens: number, completionTokens: number, usdPer1kTokens: number): void {
+    if (usdPer1kTokens <= 0) return;
+    const tokens = Math.max(0, Math.floor(promptTokens)) + Math.max(0, Math.floor(completionTokens));
+    this.c.estimated_cost_saved += (tokens / 1000) * usdPer1kTokens;
   }
 
   snapshot(): MetricsSnapshot {
