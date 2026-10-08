@@ -29,7 +29,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
     redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
     embeddingProvider: "mock", embeddingModel: "",
     semanticEnabled: true, semanticThreshold: 0.92, semanticTopK: 3,
-    semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "",
+    semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "", gatewayApiKeys: [], credEncKey: "",
     ...over,
   };
 }

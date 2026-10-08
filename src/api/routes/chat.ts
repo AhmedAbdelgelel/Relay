@@ -1,4 +1,4 @@
-// api/routes/chat.ts — HTTP only. No fetch, no provider SDK here (ISOLATION).
+// HTTP only. No fetch, no provider SDK here (ISOLATION).
 // Responsibilities: validate (STANDARDIZATION), timeout+abort wiring, SSE framing, error mapping.
 
 import { randomUUID } from "node:crypto";
@@ -60,11 +60,11 @@ export function parseRetryAfter(message: string): string | undefined {
 }
 
 export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapter, cfg: GatewayConfig, cache?: CacheRepository, deps: ChatRouteDeps = {}): void {
-  // Day 10-11: one flight table per app instance (test isolation). Keyed by
+  // One flight table per app instance (test isolation). Keyed by
   // exact cacheKey, so different prompts/providers never coalesce.
   const flight = new SingleFlight<ChatResponse>();
 
-  // Day 13: JSON snapshot for operators/tests. Prometheus format stays Week 6.
+  // JSON snapshot for operators/tests.
   app.get("/metrics", async () => metrics.snapshot());
 
   app.post("/v1/chat/completions", async (request, reply) => {
@@ -212,7 +212,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             queryEmbedding = undefined;
           }
         }
-        // --- Day 10-11 single-flight: N concurrent identical misses => 1 provider call.
+        // Single-flight: N concurrent identical misses => 1 provider call.
         // Flight key = exact cacheKey (provider-scoped), so it works even when the
         // cache is DISABLED. Upstream runs on its own AbortController: a single
         // waiter disconnecting rejects only its own wait (awaitShared), never the
@@ -435,7 +435,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
   }));
 }
 
-// Day 11: waiter-side abort. Rejects only this waiter's wait; the shared
+// Waiter-side abort. Rejects only this waiter's wait; the shared
 // upstream promise keeps running for the remaining followers.
 function awaitShared<T>(shared: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {

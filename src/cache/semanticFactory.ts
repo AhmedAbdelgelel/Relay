@@ -1,4 +1,4 @@
-// cache/semanticFactory.ts — CHOOSING for the semantic layer. Only place with
+// CHOOSING for the semantic layer. Only place with
 // `new` on vector stores. memory = zero-setup fallback; pgvector = production
 // (fails fast at boot on missing DATABASE_URL / missing extension, so a
 // misconfigured store is loud instead of silently never hitting).

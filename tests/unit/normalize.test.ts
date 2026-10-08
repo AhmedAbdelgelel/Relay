@@ -12,7 +12,7 @@ function req(over: Partial<ChatRequest> = {}): ChatRequest {
   };
 }
 
-describe("normalize + canonical key (Day 2)", () => {
+describe("normalize + canonical key", () => {
   it("same logical request, different field order/case of JSON -> same key", () => {
     const a = buildExactCacheKey("mock", req());
     const b = buildExactCacheKey("mock", req({ messages: [{ role: "user", content: "hello" }] }));

@@ -1,4 +1,4 @@
-// infrastructure/config.ts — STANDARDIZATION of all env parsing in one place.
+// STANDARDIZATION of all env parsing in one place.
 // Nothing else reads process.env directly.
 
 export type ProviderName = "mock" | "gemini" | "ollama" | "openai" | "anthropic" | "openrouter";
@@ -6,6 +6,13 @@ export type ProviderName = "mock" | "gemini" | "ollama" | "openai" | "anthropic"
 export type EmbeddingProviderName = "mock" | "gemini" | "ollama";
 
 export type SemanticStoreName = "memory" | "pgvector";
+
+export interface SeedApiKey {
+  tenant: string;
+  provider: ProviderName;
+  name: string;
+  key: string;
+}
 
 export interface GatewayConfig {
   port: number;
@@ -36,6 +43,8 @@ export interface GatewayConfig {
   semanticTtlSec: number;
   semanticStore: SemanticStoreName;
   databaseUrl: string;
+  gatewayApiKeys: SeedApiKey[];
+  credEncKey: string;
 }
 
 function str(env: NodeJS.ProcessEnv, name: string, fallback = ""): string {
@@ -62,6 +71,30 @@ function frac(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 && n < 1 ? n : fallback;
 }
 
+const PROVIDER_NAMES: ProviderName[] = ["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"];
+
+function seedApiKeys(raw: string): SeedApiKey[] {
+  if (raw.trim() === "") return [];
+  return raw.split(",").flatMap((entry) => {
+    if (entry.trim() === "") return [];
+    const parts = entry.split(":");
+    if (parts.length < 4) {
+      throw new Error(`GATEWAY_API_KEYS entry must be tenant:provider:name:key, got "${entry.trim()}"`);
+    }
+    const tenant = parts[0]!.trim();
+    const provider = parts[1]!.trim().toLowerCase();
+    const name = parts[2]!.trim();
+    const key = parts.slice(3).join(":").trim();
+    if (!tenant || !provider || !name || !key) {
+      throw new Error(`GATEWAY_API_KEYS entry must be tenant:provider:name:key with no empty part, got "${entry.trim()}"`);
+    }
+    if (!(PROVIDER_NAMES as string[]).includes(provider)) {
+      throw new Error(`GATEWAY_API_KEYS provider must be one of ${PROVIDER_NAMES.join("|")}, got "${provider}"`);
+    }
+    return [{ tenant, provider: provider as ProviderName, name, key }];
+  });
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const provider = (env["PROVIDER"] ?? "mock").toLowerCase() as ProviderName;
   if (!["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"].includes(provider)) {
@@ -74,6 +107,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const semanticStore = (env["SEMANTIC_STORE"] ?? "memory").toLowerCase() as SemanticStoreName;
   if (!["memory", "pgvector"].includes(semanticStore)) {
     throw new Error(`SEMANTIC_STORE must be one of memory|pgvector, got "${semanticStore}"`);
+  }
+  const databaseUrl = str(env, "DATABASE_URL");
+  const credEncKey = str(env, "CRED_ENC_KEY");
+  if (databaseUrl && !credEncKey) {
+    throw new Error("CRED_ENC_KEY is required when DATABASE_URL is set (provider keys are stored encrypted)");
   }
   return {
     port: num(env, "PORT", 3000),
@@ -105,6 +143,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     semanticTopK: num(env, "SEMANTIC_TOP_K", 3),
     semanticTtlSec: num(env, "SEMANTIC_TTL_S", 3600),
     semanticStore,
-    databaseUrl: str(env, "DATABASE_URL"),
+    databaseUrl,
+    gatewayApiKeys: seedApiKeys(str(env, "GATEWAY_API_KEYS")),
+    credEncKey,
   };
 }

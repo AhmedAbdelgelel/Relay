@@ -3,7 +3,7 @@ import { SingleFlight } from "../../src/cache/SingleFlight.js";
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 5));
 
-describe("SingleFlight (Day 10 unit)", () => {
+describe("SingleFlight", () => {
   it("coalesces concurrent runs into one execution", async () => {
     const f = new SingleFlight<string>();
     let calls = 0;

@@ -84,8 +84,9 @@ recorded by flipping the task Status in §Tasks below.
 
 # §Tasks
 
-> Shipped tasks (T1–T7, T9–T13) are `completed` and recorded here as history; open
-> hardening (T8, T14, T16, T15) is `pending` in dependency order. A task becomes
+> Shipped tasks (T1–T13, T23) are `completed` and recorded here as history; open
+> work (T14, T16, T15, T17–T21, T24–T27) is `pending` in dependency order.
+> T22 is superseded by T23–T27 (Token mode). A task becomes
 > `completed` only per the completion rule above. `Files:` lines declare each
 > task's file scope for the scope check.
 
@@ -905,18 +906,16 @@ T20 (README documents the Docker/CI flow).
 
 ## T22 - Auth posture + documented shipping limits
 
-Status: blocked
+Status: superseded by T23–T27
 
 ### Goal
 
-No accidental open gateway: either gate access or explicitly document the exposure contract plus known limits.
+No accidental open gateway. Token mode is implemented by T23–T27; this task is history only.
 
 ### Requirements
 
-1. Owner picks a mode first (this task is blocked until then):
-   - **Token mode**: `GATEWAY_API_KEY` env; `401` without matching `Authorization: Bearer`; key never logged; `/health` stays public for probes.
-   - **Documented mode**: bind guidance (localhost/reverse-proxy auth), prominent exposure warning in README, known-limits section (no fallback/breaker, store-layer-only tenant isolation, in-memory metrics reset, pgvector live-untested).
-2. Implement the chosen mode only — no hybrid scope creep.
+1. Owner chose Token mode: two lanes on one chat endpoint (gateway key = registered lane with full cache plus own usage; provider key = anonymous try-out lane with cache bypass).
+2. No further work lands here — implement T23–T27 instead.
 
 ### Related Architecture
 
@@ -924,20 +923,208 @@ No accidental open gateway: either gate access or explicitly document the exposu
 
 ### Files
 
-Token mode: request-auth check in `src/api/routes/chat.ts` + tests. Documented mode: `README.md` sections only.
+None. History only — see T23–T27 for the Token mode file scope.
 
 ### Acceptance Criteria
 
-- Token mode: missing/wrong key → `401` (no provider call); correct key flows normally; health probe unaffected.
-- Documented mode: README carries the exposure warning + limits; reviewer confirms no code path contradicts them.
+- Superseded: acceptance is tracked on T23–T27.
 
 ### Testing Requirements
 
-- Token mode: 401/200 contract + integration tests. Documented mode: reviewer reads the sections.
+- None here; testing is tracked on T23–T27.
 
 ### Dependencies
 
-Blocked on owner mode choice. Then T20 (README carries the outcome).
+None. T23–T27 implement the chosen mode.
+
+---
+
+## T23 - Auth seed config + migration
+
+Status: completed
+
+### Goal
+
+Keys and provider credentials have a home, dev boots with zero setup, stored provider keys never sit in plaintext.
+
+### Requirements
+
+1. Add `db/migrations/002_api_keys.sql` with `api_keys` and `provider_credentials` tables.
+2. Extend `loadConfig` with `GATEWAY_API_KEYS` seed (`tenant:provider:name:key` entries, bad entry fails boot) and `CRED_ENC_KEY` (missing key with `DATABASE_URL` set fails boot).
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Auth; Composition root.
+
+### Files
+
+`src/infrastructure/config.ts`, `db/migrations/002_api_keys.sql`.
+
+### Acceptance Criteria
+
+- Empty seed parses to no keys; single and multiple entries parse with whitespace trimmed and stray commas skipped.
+- Keys containing colons survive; entries with fewer than 4 parts, empty parts, or unknown providers fail boot.
+- `CRED_ENC_KEY` passes through; `DATABASE_URL` without it fails boot.
+- Migration creates both auth tables with `key_hash UNIQUE` and `(tenant_id, provider)` primary key.
+
+### Testing Requirements
+
+- `tests/unit/auth-config.test.ts` (config parsing + migration content assertions).
+
+### Dependencies
+
+None.
+
+---
+
+## T24 - Key and credential ports
+
+Status: pending
+
+### Goal
+
+HTTP and guard code depend on ports, not SQL; behavior is locked while storage stays an implementation detail.
+
+### Requirements
+
+1. Define `ApiKeyStore` (`verify`, `create`, `list`, `revoke`, `rotate`) with sha256-hash storage, `lg_` prefixed keys, plaintext shown once.
+2. Define `CredentialStore` (`save`, `get`, `remove`) with encrypt-on-write and decrypt-on-read; provider keys never returned.
+3. Contract tests pin the semantics.
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Auth; INV-9.
+
+### Files
+
+`src/auth/ApiKeyStore.ts`, `src/auth/CredentialStore.ts` plus contract tests.
+
+### Acceptance Criteria
+
+- `verify` accepts a valid key and binds tenant plus provider; revoked or expired keys fail.
+- `create` returns plaintext once and stores only the hash; `rotate` invalidates the old key.
+- `save`/`get` round-trips the provider key encrypted; stored rows never hold plaintext.
+
+### Testing Requirements
+
+- Contract tests: verify/create/list/revoke/rotate lifecycle; encrypt round-trip; revoked and expired rejection.
+
+### Dependencies
+
+T23 (tables and seed config it builds on).
+
+---
+
+## T25 - Lane guard
+
+Status: pending
+
+### Goal
+
+One guard owns lane logic and the auth error vocabulary; the pick runs before validation, provider, and cache.
+
+### Requirements
+
+1. New `laneGuard` preHandler: gateway key present goes registered (verify, attach `request.auth` with tenant and provider); else provider-key header present goes anonymous (attach header key, no tenant); else 401 with register hint.
+2. Error map: 401 missing everything or bad gateway key; 403 revoked, expired, or provider mismatch; 503 store down. No key material in logs.
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Auth; Error Handling; INV-9.
+
+### Files
+
+`src/auth/laneGuard.ts`.
+
+### Acceptance Criteria
+
+- No key of either kind → 401 with register hint.
+- Bad gateway key → 401; revoked, expired, or provider mismatch → 403; store down → 503 `auth_unavailable`.
+- Guard runs before validation, provider, and cache (no spend on auth failure).
+
+### Testing Requirements
+
+- Contract tests for the full lane matrix: 401 no-key, 401 bad key, 403 revoked/expired/mismatch, 503 store down, registered attach, anonymous attach.
+
+### Dependencies
+
+T24 (stores the guard verifies against).
+
+---
+
+## T26 - Chat with two lanes
+
+Status: pending
+
+### Goal
+
+Try-out traffic flows without leaking server keys or cache entries; registered users get the full savings pipeline with attributed numbers.
+
+### Requirements
+
+1. Register `laneGuard` on chat. Registered lane: resolve upstream key from stored credential, run the full cache pipeline, record per-tenant usage.
+2. Anonymous lane: resolve upstream key from the header only, bypass caches with `x-cache: BYPASS`, count global counters only.
+3. Reply carries `x-lane` (`registered` | `anonymous`) plus `x-key-id` on the registered lane; `x-tenant-id` header always ignored.
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Auth; Request Flow; INV-7, INV-8, INV-9.
+
+### Files
+
+`src/api/routes/chat.ts`, `src/server.ts`.
+
+### Acceptance Criteria
+
+- Registered request serves exact plus semantic hits and records per-tenant usage; serving provider must equal key provider else 403.
+- Anonymous request bypasses cache, uses only the header key (never server keys), and counts global counters only.
+- No key → 401 before validation, provider, or cache; evidence headers present on every validated reply.
+
+### Testing Requirements
+
+- Integration: registered hit path with `x-lane`/`x-key-id`; anonymous bypass with header key; 401 no-key; 403 provider mismatch.
+
+### Dependencies
+
+T25 (lane contract the chat route reuses).
+
+---
+
+## T27 - Register and own usage
+
+Status: pending
+
+### Goal
+
+One call turns try-out users into settled users; each user sees only its own numbers.
+
+### Requirements
+
+1. `POST /v1/register` (open): validate provider, store the encrypted provider key, issue a gateway key, return it once.
+2. `GET /v1/usage` (gateway key): return the caller tenant slice only — requests, exact hits, semantic hits, misses, hit rate, avoided calls, avg latency.
+3. `metrics` gains `auth_rejects_total`.
+
+### Related Architecture
+
+`agent/implementation.md` Part B → Auth; Observability.
+
+### Files
+
+`src/api/routes/register.ts`, `src/api/routes/usage.ts`, `src/observability/metrics.ts`, `src/server.ts`.
+
+### Acceptance Criteria
+
+- `POST /v1/register` with `{ name, provider, provider_key }` → 201 `{ tenant_id, provider, key (once), key_prefix }`; 400 on validation or unknown provider; 503 when store down.
+- `GET /v1/usage` returns only the caller tenant slice; 401 bad key; 403 revoked or expired.
+- No key material in logs, metrics, health, or usage bodies.
+
+### Testing Requirements
+
+- Contract: register 201 plus key-once property; usage tenant isolation; 400/401/403/503 matrix; `auth_rejects_total` increments.
+
+### Dependencies
+
+T24 (stores), T25 (guard on usage).
 
 ---
 
@@ -961,8 +1148,10 @@ npm run typecheck      # tsc --noEmit -p tsconfig.check.json
 
 | Route | Method | Notes |
 | --- | --- | --- |
-| `/v1/chat/completions` | POST | OpenAI-shaped subset (`model, messages, temperature, max_tokens, stream`). Invalid → `400` `{error:{code,message}}`, never calls provider. |
-| `/health` | GET | Liveness. |
+| `/v1/chat/completions` | POST | Gateway key (`Authorization: Bearer`) or provider key (`x-provider-key`). Invalid → `400`, never calls provider. Reply carries `x-lane` plus `x-key-id` on the registered lane. |
+| `/v1/register` | POST | Open. Body `{ name, provider, provider_key }` → `201` with gateway key shown once. |
+| `/v1/usage` | GET | Gateway key. Caller tenant slice only. |
+| `/health` | GET | Liveness (public). |
 | `/metrics` | GET | JSON snapshot (keys below). |
 | `/providers` | GET | Configured provider list. |
 | `/` | GET | Playground UI (static, same-origin). CORS allowed on the four API routes for the metrics card. |
@@ -991,6 +1180,11 @@ Semantic cache:
 - `DATABASE_URL` (required for `SEMANTIC_STORE=pgvector`; schema applied automatically at
   boot from `db/migrations/001_semantic_cache.sql`)
 
+Auth:
+
+- `GATEWAY_API_KEYS` (empty → no seed keys; entries `tenant:provider:name:key`, bad entry fails boot)
+- `CRED_ENC_KEY` (empty in dev; required when `DATABASE_URL` is set)
+
 Per-provider (only the selected `PROVIDER` needs its key; routing needs any provider whose
 model prefix a client may send):
 
@@ -1007,7 +1201,8 @@ model prefix a client may send):
 
 Counters: `requests_total`, `exact_hits`, `exact_misses`, `singleflight_leaders`,
 `singleflight_coalesced`, `provider_requests`, `provider_errors`, `cache_lookup_failed`,
-`cache_write_failed`, `semantic_hits`, `semantic_misses`, `semantic_errors`.
+`cache_write_failed`, `semantic_hits`, `semantic_misses`, `semantic_errors`,
+`auth_rejects_total`.
 
 > T15 will extend this snapshot (`semantic similarity` already tracked via
 > `avg_semantic_score`; histogram, fallback/breaker counters, token + cost accounting
@@ -1018,9 +1213,11 @@ Derived: `semantic_lookups`, `avg_semantic_score`, `cache_lookups`, `avg_cache_l
 
 ## Health triage
 
-- `x-tenant-id` header (optional) scopes the **semantic** store only — exact cache keys are
-  per provider+request and shared across tenants today. Keep in mind before onboarding real
-  tenants (T16 covers policy-level re-checks).
+- Lane pick runs before validation, provider, and cache. No lane → `401` with register hint, no spend. Registered: serving provider must equal key provider else `403`. Anonymous: `x-provider-key` required, cache `BYPASS`, upstream uses the header key only.
+- `x-tenant-id` header is always ignored — tenant comes from the verified gateway key.
+
+- Semantic entries stay scoped per tenant; exact cache keys are per provider+request.
+  Policy-level tenant re-checks are open work (T16).
 - Cache/Redis or pgvector down → requests still succeed (MISS + `cache_lookup_failed` /
   `semantic_errors` climb); never a 5xx from the cache layer.
 - Provider down/timeout → `429|502|504` per error mapping; SDK internals never leak.

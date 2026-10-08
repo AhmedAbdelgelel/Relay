@@ -1,4 +1,4 @@
-// providers/factory.ts — CHOOSING pattern (Factory).
+// CHOOSING pattern (Factory).
 // Single place that maps PROVIDER env -> concrete adapter.
 // api/ and server bootstrap never use `new` on a provider directly.
 

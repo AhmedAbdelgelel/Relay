@@ -1,4 +1,4 @@
-// providers/OpenAICompatibleProvider.ts — STANDARDIZATION over the wire.
+// STANDARDIZATION over the wire.
 // Gemini, Ollama, and OpenAI all speak POST {model,messages} -> {choices[0].message}.
 // Only baseURL/apiKey/model differ, so one class covers all three (see factory.ts).
 

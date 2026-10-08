@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GatewayMetrics } from "../../src/observability/metrics.js";
 
-describe("GatewayMetrics (Day 13 unit)", () => {
+describe("GatewayMetrics", () => {
   it("counts hits/misses and derives hit_rate + avoided", () => {
     const m = new GatewayMetrics();
     m.inc("requests_total", 4);

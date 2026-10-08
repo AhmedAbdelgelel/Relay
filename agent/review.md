@@ -31,7 +31,7 @@
 
 - [ ] Correctness, error handling, separation of concerns, naming, type safety (strict mode clean).
 - [ ] Maintainability: small diffs, reused abstractions, no dead code.
-- [ ] Security: no leaked secrets, no unvalidated input reaching providers, no swallowed errors without a counter and a reason.
+- [ ] Security: no leaked secrets, no unvalidated input reaching providers, no swallowed errors without a counter and a reason. Auth: no key material in logs/metrics/health/usage, tenant from the verified key only, lane headers correct.
 - [ ] Performance: no unbounded work on the request path, no debug leftovers.
 
 ## 5. Eval gate (before any threshold change)

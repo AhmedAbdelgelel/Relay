@@ -3,7 +3,7 @@ import { InMemoryCache } from "../../src/cache/InMemoryCache.js";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-describe("InMemoryCache eviction + TTL (Day 12 unit)", () => {
+describe("InMemoryCache eviction + TTL", () => {
   it("expires entries after TTL", async () => {
     const c = new InMemoryCache();
     await c.set("k", "v", 1);

@@ -1,4 +1,4 @@
-// cache/SingleFlight.ts — Day 10-11: stampede protection for concurrent identical misses.
+// Stampede protection for concurrent identical misses.
 // Single-process only. One shared promise per key; followers await the leader.
 // Upstream work is DETACHED from any single waiter's AbortSignal so one client
 // disconnect cannot cancel the result for the other 99. A waiter abort only

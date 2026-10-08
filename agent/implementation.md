@@ -20,16 +20,17 @@ decided by data, not feel.
 
 ## Tasks
 
-Shipped: T1–T13 (contract, providers + conformance/capabilities, canonical key, exact cache,
+Shipped: T1–T13, T23 (contract, providers + conformance/capabilities, canonical key, exact cache,
 single-flight, streaming, metrics, normalization, embeddings, semantic lookup, reuse policy,
-admission). Open, in order: **T14** fallback+breaker → **T16** policy depth → **T15** eval
-harness. Full definitions in `agent/loop.md` §Tasks. One task per pass.
+admission, auth seed config). Open, in order: **T24** key ports → **T25** lane guard →
+**T26** chat lanes → **T27** register + usage, plus **T14** fallback+breaker → **T16**
+policy depth → **T15** eval harness. Full definitions in `agent/loop.md` §Tasks. One task per pass.
 
 ## Arch
 
-One pipeline: validate → canonicalize (sha256) → exact lookup → semantic lookup (policy
+Two lanes on one chat endpoint, then one pipeline: lane pick → validate → canonicalize (sha256) → exact lookup → semantic lookup (policy
 gate) → single-flight → provider → normalize → admit → reply. Full source of truth in
-Part B below. Invariants: invalid → 400 with no spend; cache/embed failure → MISS never
+Part B below. Invariants: no lane → 401 with no spend; invalid → 400 with no spend; cache/embed failure → MISS never
 5xx; N identical misses → 1 provider call; semantic HIT only if policy says reusable.
 
 > Read this page, then Product (Part A), Architecture (Part B), and the ONE task
@@ -76,7 +77,7 @@ Part B below. Invariants: invalid → 400 with no spend; cache/embed failure →
 - Provider fallback chain + circuit breaker (open task T14).
 - Eval harness + threshold defense + cost metrics (open task T15).
 - Policy-level tenant/system-fingerprint re-checks (open task T16).
-- Keyed API auth; Prometheus/tracing export; rate-limit/quotas; tenancy dashboards;
+- Prometheus/tracing export; rate-limit/quotas; tenancy dashboards;
   multi-region.
 
 ## Constraints
@@ -92,7 +93,7 @@ Part B below. Invariants: invalid → 400 with no spend; cache/embed failure →
 
 - Provider prompt-cache discount exposure (`cached_tokens`) as a third savings layer.
 - Prometheus export + latency histograms beyond the JSON snapshot.
-- Priced tenants with quotas/dashboards; keyed API auth.
+- Priced tenants with quotas/dashboards.
 - Distributed single-flight/breaker if the gateway ever runs multi-instance.
 
 ## Process directives
@@ -108,13 +109,14 @@ Part B below. Invariants: invalid → 400 with no spend; cache/embed failure →
 # PART B — Architecture (source of truth for implementation)
 
 > The AI agent must NOT silently modify this Part; conflicts are reported via
-> ARCHITECTURE_CONFLICT (§4). Open hardening (T8/T14/T15/T16, see `agent/loop.md`
+> ARCHITECTURE_CONFLICT (§4). Open work (T14/T15/T16/T24–T27, see `agent/loop.md`
 > §Tasks) is tracked as open tasks, not specified here.
 
 ## System Overview
 
 ```text
 Client -> POST /v1/chat/completions
+  -> Lane pick (gateway key: registered | provider key: anonymous | neither: 401, no spend)
   -> Validate (400 never calls provider/cache)
   -> Canonicalize -> sha256 -> x-cache-hash
   -> Exact cache lookup (Redis | in-memory LRU)
@@ -131,7 +133,8 @@ Client -> POST /v1/chat/completions
   -> Every validated reply: x-request-id, x-provider, x-cache-hash, x-latency-ms
 ```
 
-Open (not built): ordered fallback chain + breaker (T14), capability gate (T8),
+Open (not built): key/credential ports + lane guard + chat lanes + register/usage (T24–T27),
+ordered fallback chain + breaker (T14),
 policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost metrics (T15).
 
 ## Components
@@ -265,17 +268,27 @@ policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost met
 - **Constraints:** Never throws; no keys/prompt text in logs; Prometheus is a follow-up.
 - **Why:** Operators see hits/misses/avoided spend without reading app logs.
 
+### Auth (`src/auth/*`, `src/api/routes/register.ts`, `src/api/routes/usage.ts`)
+
+- **Responsibility:** Two lanes on one chat endpoint. Registered lane (gateway key) gets the full cache pipeline plus per-tenant usage; anonymous lane (provider-key header) gets a try-out path with cache bypass and global counters only.
+- **Inputs:** `Authorization: Bearer <gateway-key>` (alias `x-api-key`) or `x-provider-key: <upstream-key>`; `GATEWAY_API_KEYS` seed and `CRED_ENC_KEY` from config.
+- **Outputs:** `request.auth` (tenant, provider) or anonymous context; `x-lane` plus `x-key-id` evidence headers; `POST /v1/register` issues a `lg_` key once; `GET /v1/usage` returns the caller tenant slice.
+- **Dependencies:** `ApiKeyStore` (`verify`, `create`, `list`, `revoke`, `rotate`), `CredentialStore` (`save`, `get`, `remove`); `laneGuard` preHandler.
+- **Interface:** `laneGuard` — gateway key present goes registered, else provider key goes anonymous, else 401 with register hint.
+- **Constraints:** Lane pick runs before validation, provider, and cache; serving provider must equal key provider else 403; `x-tenant-id` always ignored; no key material in logs, metrics, health, or usage.
+- **Why:** Try-out traffic never touches server keys or cache entries; settled users get savings plus attributed numbers.
+
 ### Composition root (`src/server.ts`, `src/infrastructure/config.ts`)
 
 - **Responsibility:** Parse ALL env into `GatewayConfig` (validated, loud on typos); wire
-  config → providers → caches → embedder → routes. Only file that owns `new` for infra
+  config → providers → caches → embedder → auth stores → routes. Only file that owns `new` for infra
   (via factories).
 - **Inputs:** `process.env`.
 - **Outputs:** Configured Fastify app (buildServer sync for tests; buildServerAsync for
   pgvector boot + listen).
 - **Dependencies:** Every factory; dotenv.
 - **Interface:** `buildServer()`, `buildServerAsync()`, `loadConfig(env)`.
-- **Constraints:** Secrets read only here; missing provider key or bad enum → process exit;
+- **Constraints:** Secrets read only here; missing provider key, bad enum, bad `GATEWAY_API_KEYS` entry, or missing `CRED_ENC_KEY` with `DATABASE_URL` → process exit;
   `VITEST` guard prevents auto-listen.
 - **Why:** Standardization: one parser, one wiring point, testable boot.
 
@@ -285,6 +298,7 @@ Non-streaming request, end to end:
 
 ```text
 POST /v1/chat/completions
+  → Lane pick (gateway key: registered | provider key: anonymous | neither: 401, no spend)
   → Zod subset validation (model/messages/temperature/max_tokens/stream)
   → per-model routing selects the serving adapter
   → canonical key build (trim, sorted JSON, sha256 → x-cache-hash)
@@ -312,7 +326,7 @@ POST /v1/chat/completions
 
 ## Data Flow
 
-- Request state moves forward only: validation → canonical form → lookups → provider →
+- Request state moves forward only: lane pick → validation → canonical form → lookups → provider →
   normalized form → admission → reply. No stage mutates an earlier stage's data.
 - Cache writes: exact `set` after provider success (JSON payload: content, model, usage,
   cachedAt); semantic `save` upserting on `(tenant_id, provider, model, prompt_hash)` with
@@ -325,20 +339,27 @@ POST /v1/chat/completions
 
 ## Interfaces/Contracts
 
-- `POST /v1/chat/completions`: body `{model (required, non-empty), messages (1+, role
+- `POST /v1/chat/completions`: registered (`Authorization: Bearer <gateway-key>`, alias `x-api-key`)
+  or anonymous (`x-provider-key: <upstream-key>`); body `{model (required, non-empty), messages (1+, role
   system|user|assistant, non-empty content), temperature (0–2, default 1.0), max_tokens
-  (optional positive int), stream (default false)}`. Invalid →
+  (optional positive int), stream (default false)}`. No key → `401` with register hint, no spend. Invalid →
   `400 {error:{code,message,request_id}}`, no provider call, no cache touch.
+- `POST /v1/register` (open): body `{ name, provider, provider_key }` → `201`
+  `{ tenant_id, provider, key (once), key_prefix }`; `400` on validation or unknown provider.
+- `GET /v1/usage` (gateway key): caller tenant slice only
+  `{ tenant_id, requests, exact_hits, semantic_hits, misses, hit_rate, provider_calls_avoided, avg_provider_ms }`.
 - Error vocabulary: timeout/abort → `504`; rate limit → `429` (+ parsed `retry_after`
-  when present); upstream 5xx/auth/404 → `502`. Upstream bodies never leak beyond a
-  bounded snippet.
+  when present); upstream 5xx/auth/404 → `502`. Auth: missing or bad key → `401`;
+  revoked, expired, or provider mismatch → `403`; store down → `503 auth_unavailable`.
+  Upstream bodies never leak beyond a bounded snippet.
 - Evidence headers on every validated reply: `x-request-id`, `x-provider`, `x-cache`,
-  `x-cache-hash` (absent only on 400), `x-latency-ms`; plus `x-semantic-similarity` on
+  `x-cache-hash` (absent only on 400), `x-latency-ms`, `x-lane` (`registered` | `anonymous`);
+  plus `x-key-id` on the registered lane, `x-semantic-similarity` on
   semantic hits, `x-coalesced` on coalesced followers.
-- Tenant scoping: optional `x-tenant-id` header (trimmed, default `default`) scopes
-  semantic lookups and admission.
+- Tenant identity comes from the verified gateway key; `x-tenant-id` is always ignored.
+  Semantic lookups stay scoped per tenant.
 - `GET /health` (liveness + backend names + read-only tuning config, no secrets),
-  `GET /metrics` (counters + derived rates), `GET /providers` (id/label/endpoint/models/
+  `GET /metrics` (counters + derived rates, plus `auth_rejects_total`), `GET /providers` (id/label/endpoint/models/
   configured/active, never key values), `GET /` (static playground UI).
 
 ## Database/Storage Architecture
@@ -356,6 +377,10 @@ POST /v1/chat/completions
 - **Eviction/expiry:** TTL on both stores (expired reads = misses); LRU caps (exact 1000,
   vector 2000) with `recordHit` recency; dedupe on prompt_hash; double-write failure never
   fails the request.
+- **Auth:** tables `api_keys` (`key_hash UNIQUE`, expiry/revocation columns) and
+  `provider_credentials` (`PRIMARY KEY (tenant_id, provider)`, encrypted key only),
+  applied from `db/migrations/002_api_keys.sql`. Gateway keys are `lg_` plus 32B base64url;
+  only sha256 hex is stored and plaintext is shown once at register.
 
 ## External Integrations
 
@@ -376,7 +401,7 @@ POST /v1/chat/completions
 
 ## Error Handling
 
-- Validation failures → 400 before any spend (INV-1).
+- Validation failures → 400 before any spend (INV-1); missing or bad lane → 401/403/503 before any spend (INV-9).
 - Provider failures → `GatewayError` via `toGatewayError`/`providerHttpError`: 429→429
   (retryable), 401/403/404→502 (not retryable), 5xx→502 (retryable), Abort→504
   (retryable); bounded snippet only, never raw internals.
@@ -406,11 +431,11 @@ POST /v1/chat/completions
 
 ## Security Considerations
 
-- API keys never logged, never echoed by `/health`/`/providers`; prompts/responses never logged.
+- Gateway and provider keys never logged, never echoed by `/health`/`/providers`/`/metrics`/`/usage`; prompts/responses never logged. Provider keys stored encrypted, never returned.
+- Lane pick runs before validation, provider, and cache: no lane means 401 with a register hint and no spend. Registered requests serve only their key provider (else 403); anonymous requests use only the header key and bypass caches.
 - CORS limited to the four API routes; static assets same-origin; path traversal guarded in
   the playground file server.
-- `x-tenant-id` scopes the semantic store only (exact keys are per provider+request today —
-  T16 adds policy-level tenant re-checks).
+- Tenant identity comes from the verified key only (`x-tenant-id` ignored); usage numbers are per tenant.
 - Upstream error snippets truncated to 300 chars.
 
 ## Architectural Constraints
@@ -424,7 +449,8 @@ POST /v1/chat/completions
   INV-5 `x-cache-hash` on every validated reply ·
   INV-6 semantic HIT only if policy `reusable:true` ·
   INV-7 fallback answers cached under serving key only ·
-  INV-8 errors/empty never admitted.
+  INV-8 errors/empty never admitted ·
+  INV-9 no lane → 401 with no spend; serving provider must equal key provider; anonymous uses header key only, cache BYPASS.
 
 ## Decision Register (ADR index)
 

@@ -1,4 +1,4 @@
-// providers/MockProvider.ts — deterministic fake for tests + zero-setup dev.
+// Deterministic fake for tests + zero-setup dev.
 // Supports delay + failure injection so timeout/abort paths are testable without a real LLM.
 
 import type { ChatResponse } from "../domain/types.js";

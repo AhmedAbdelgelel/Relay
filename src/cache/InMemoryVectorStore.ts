@@ -1,4 +1,4 @@
-// cache/InMemoryVectorStore.ts — brute-force cosine fallback (Day 12 pattern).
+// Brute-force cosine fallback.
 // Same interface as PgVectorStore; threshold/topK/tenant semantics identical.
 // No ANN index: O(n) scan, fine for dev/test. Production uses pgvector HNSW.
 

@@ -1,4 +1,4 @@
-// domain/types.ts — pure types only. No I/O, no imports from api/providers/infra.
+// Pure types only. No I/O, no imports from api/providers/infra.
 // ISOLATION: nothing outside domain may leak provider-specific shapes in here.
 
 export type ChatRole = "system" | "user" | "assistant";

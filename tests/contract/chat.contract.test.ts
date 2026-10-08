@@ -20,7 +20,7 @@ function testApp(provider: ProviderAdapter = new MockProvider()) {
     redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
     embeddingProvider: "mock", embeddingModel: "",
     semanticEnabled: false, semanticThreshold: 0.92, semanticTopK: 3,
-    semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "",
+    semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "", gatewayApiKeys: [], credEncKey: "",
   };
   registerChatRoutes(app, provider, cfg);
   return app;
@@ -161,7 +161,7 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
       redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
       embeddingProvider: "mock", embeddingModel: "",
       semanticEnabled: false, semanticThreshold: 0.92, semanticTopK: 3,
-      semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "",
+      semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "", gatewayApiKeys: [], credEncKey: "",
     };
     const app = Fastify();
     registerChatRoutes(app, new MockProvider({ delayMs: 5000 }), shortCfg);

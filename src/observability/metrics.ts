@@ -1,5 +1,5 @@
-// observability/metrics.ts — Day 13: minimal in-memory cache/provider metrics.
-// Week 6 adds Prometheus; until then this singleton backs GET /metrics (JSON)
+// Minimal in-memory cache/provider metrics.
+// This singleton backs GET /metrics (JSON)
 // and the log lines. All methods are sync and never throw.
 
 export interface MetricsSnapshot {

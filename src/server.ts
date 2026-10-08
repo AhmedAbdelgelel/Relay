@@ -1,4 +1,4 @@
-// server.ts — composition root. Only file allowed to wire config -> provider -> routes.
+// Composition root. Only file allowed to wire config -> provider -> routes.
 // CHOOSING happens here via createProviderFromEnv; routes never choose.
 // Modular monolith: src/api depends on ports only;
 // this file owns all `new` for cache / embedder / vector store (except the

@@ -198,6 +198,8 @@ describe("provider types", () => {
       semanticTtlSec: 3600,
       semanticStore: "memory",
       databaseUrl: "",
+      gatewayApiKeys: [],
+      credEncKey: "",
     };
     const mock: ProviderAdapter = createProviderFromEnv({ ...base, provider: "mock" });
     expect(mock.name).toBe("mock");

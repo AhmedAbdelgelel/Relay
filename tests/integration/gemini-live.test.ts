@@ -51,6 +51,8 @@ function liveCfg(): GatewayConfig {
     semanticTtlSec: 3600,
     semanticStore: "memory",
     databaseUrl: "",
+    gatewayApiKeys: [],
+    credEncKey: "",
   };
 }
 

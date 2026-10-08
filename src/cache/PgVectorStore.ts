@@ -1,4 +1,4 @@
-// cache/PgVectorStore.ts — production similarity search on real pgvector.
+// Production similarity search on real pgvector.
 // SQL uses only standard pgvector surface: vector(n) type, <=> (cosine
 // distance), HNSW index with vector_cosine_ops. Verified by contract test on
 // the generated SQL + scripts/semantic-smoke.mjs against a live

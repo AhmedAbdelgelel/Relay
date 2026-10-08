@@ -1,4 +1,4 @@
-// embeddings/EmbeddingProvider.ts — ISOLATION boundary for vector representations.
+// ISOLATION boundary for vector representations.
 // api/ and cache/ depend on this interface only, never on fetch/SDK details.
 // Model identity (provider/model/temperature) is NOT embedded: it stays a
 // hard filter in the store query + reuse policy. Only the message text is

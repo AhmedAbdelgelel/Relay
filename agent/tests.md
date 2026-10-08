@@ -22,8 +22,9 @@ Error cases
 Edge cases
 Boundary conditions
 Invalid input
-Dependency failures (Redis down, embedder down, provider 429/5xx/timeout)
+Dependency failures (Redis down, embedder down, provider 429/5xx/timeout, auth store down)
 Concurrency issues where relevant (single-flight, concurrent misses)
+Auth lanes where relevant (registered / anonymous / no-key, revoked / expired / provider-mismatch)
 Regression risks (what existing behavior could this break?)
 ```
 

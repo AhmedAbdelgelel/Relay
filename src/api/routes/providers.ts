@@ -1,4 +1,4 @@
-// api/routes/providers.ts — HTTP only. Live provider status, never key values.
+// HTTP only. Live provider status, never key values.
 // Modular monolith: api owns HTTP; choosing lives in factory/server.
 
 import type { FastifyInstance } from "fastify";

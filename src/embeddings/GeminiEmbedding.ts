@@ -1,4 +1,4 @@
-// embeddings/GeminiEmbedding.ts — native Gemini embedContent REST (no SDK).
+// Native Gemini embedContent REST (no SDK).
 // Model default text-embedding-004 (768-d, matches EMBEDDING_DIM).
 // Only place that speaks the :embedContent API.
 

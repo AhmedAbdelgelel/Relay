@@ -1,4 +1,4 @@
-// embeddings/factory.ts — CHOOSING: env -> embedder. Only place with `new`.
+// CHOOSING: env -> embedder. Only place with `new`.
 
 import type { GatewayConfig } from "../infrastructure/config.js";
 import type { EmbeddingProvider } from "./EmbeddingProvider.js";

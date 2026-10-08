@@ -1,4 +1,4 @@
-// embeddings/OllamaEmbedding.ts — local unlimited embedder (/api/embeddings).
+// Local unlimited embedder (/api/embeddings).
 // Default nomic-embed-text (768-d, matches EMBEDDING_DIM). Use for
 // stampede/load tests to avoid burning Gemini quota.
 

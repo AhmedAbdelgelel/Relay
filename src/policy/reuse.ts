@@ -1,4 +1,4 @@
-// policy/reuse.ts — L3 gate: Similarity != Equivalence != Reusability.
+// L3 gate: Similarity != Equivalence != Reusability.
 // The store finds CLOSE vectors; this decides whether reuse is SAFE.
 // Pure function, no I/O, fully unit-tested. The store query already filters
 // tenant/provider/model/expiry — these checks are defense in depth so a

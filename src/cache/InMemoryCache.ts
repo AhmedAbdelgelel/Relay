@@ -1,6 +1,6 @@
 import type { CacheRepository } from "./CacheRepository.js";
 
-// Day 12: bounded LRU. Redis handles eviction server-side (maxmemory-policy);
+// Bounded LRU. Redis handles eviction server-side (maxmemory-policy);
 // the in-memory fallback must not grow unbounded in long-running dev/test.
 // Default 1000 entries; oldest-inserted evicted first, hits refresh recency.
 export class InMemoryCache implements CacheRepository {

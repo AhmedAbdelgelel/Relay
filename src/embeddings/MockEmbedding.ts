@@ -1,4 +1,4 @@
-// embeddings/MockEmbedding.ts — deterministic, zero-setup embedder for tests/dev.
+// Deterministic, zero-setup embedder for tests/dev.
 // Same text -> identical unit vector. Different texts -> quasi-orthogonal
 // vectors (similarity ~0), so paraphrases NEVER falsely match: mock semantic
 // lookups are useless but always safe. Real matching needs gemini/ollama.

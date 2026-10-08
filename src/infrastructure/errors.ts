@@ -1,4 +1,4 @@
-// infrastructure/errors.ts — STANDARDIZATION: every provider failure becomes a GatewayError.
+// STANDARDIZATION: every provider failure becomes a GatewayError.
 // HTTP layer only switches on GatewayError. No SDK bodies/stacks leak to clients.
 
 import { GatewayError } from "../domain/types.js";

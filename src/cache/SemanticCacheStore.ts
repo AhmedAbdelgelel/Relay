@@ -1,4 +1,4 @@
-// cache/SemanticCacheStore.ts — port for similarity search over past answers.
+// Port for similarity search over past answers.
 // Two adapters: PgVectorStore (real pgvector, production) and
 // InMemoryVectorStore (brute-force cosine, zero-setup fallback — the same
 // pattern ADR-003 used for Redis, agent/implementation.md Part B Decision Register). Policy/threshold code above this interface

@@ -22,7 +22,7 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
     redisUrl: "", cacheTtlSec: 3600, cacheEnabled: true,
     embeddingProvider: "mock", embeddingModel: "",
     semanticEnabled: false, semanticThreshold: 0.92, semanticTopK: 3,
-    semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "",
+    semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "", gatewayApiKeys: [], credEncKey: "",
     ...over,
   };
 }
@@ -31,7 +31,7 @@ const body = { model: "m", messages: [{ role: "user", content: "stampede" }] };
 
 beforeEach(() => metrics.reset());
 
-describe("single-flight stampede (Day 11 integration)", () => {
+describe("single-flight stampede", () => {
   it("50 concurrent identical misses => 1 provider call, all 200", async () => {
     const app = Fastify();
     const cache = new InMemoryCache();
@@ -118,7 +118,7 @@ describe("single-flight stampede (Day 11 integration)", () => {
   });
 });
 
-describe("cache metrics endpoint (Day 13 integration)", () => {
+describe("cache metrics endpoint", () => {
   it("HIT/MISS update /metrics with hit_rate + avoided", async () => {
     const app = Fastify();
     registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache());

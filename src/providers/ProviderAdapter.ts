@@ -1,4 +1,4 @@
-// providers/ProviderAdapter.ts — ISOLATION boundary (Dependency Inversion).
+// ISOLATION boundary (Dependency Inversion).
 // api/ only depends on this interface, never on fetch/SDK details.
 
 import type { ChatRequest, ChatResponse, TokenUsage } from "../domain/types.js";
