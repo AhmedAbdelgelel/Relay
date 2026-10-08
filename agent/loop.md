@@ -562,7 +562,7 @@ column/policy.
 
 ## T14 - Provider fallback + circuit breaker + retry
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -1202,11 +1202,12 @@ model prefix a client may send):
 Counters: `requests_total`, `exact_hits`, `exact_misses`, `singleflight_leaders`,
 `singleflight_coalesced`, `provider_requests`, `provider_errors`, `cache_lookup_failed`,
 `cache_write_failed`, `semantic_hits`, `semantic_misses`, `semantic_errors`,
+`fallback_count`, `breaker_open` (gauge: breakers open right now),
 `auth_rejects_total`.
 
-> T15 will extend this snapshot (`semantic similarity` already tracked via
-> `avg_semantic_score`; histogram, fallback/breaker counters, token + cost accounting
-> planned — see T15 above).
+> T15 will extend this snapshot further (`semantic similarity` already tracked via
+> `avg_semantic_score`; histogram, token + cost accounting planned — see T15 above;
+> fallback/breaker counters already live via T14).
 
 Derived: `semantic_lookups`, `avg_semantic_score`, `cache_lookups`, `avg_cache_lookup_ms`,
 `provider_latency_ms_total`, `avg_provider_ms`, `hit_rate`, `provider_calls_avoided`.

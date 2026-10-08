@@ -8,7 +8,9 @@ import { AnthropicAdapter } from "../../src/providers/AnthropicAdapter.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
 import type { ProviderAdapter, StreamChunk } from "../../src/providers/ProviderAdapter.js";
 import { createProvidersFromEnv, providerForModel } from "../../src/providers/factory.js";
-import type { ChatRequest, ChatResponse } from "../../src/domain/types.js";
+import { buildExactCacheKey } from "../../src/domain/normalize.js";
+import { metrics } from "../../src/observability/metrics.js";
+import { GatewayError, type ChatRequest, type ChatResponse } from "../../src/domain/types.js";
 
 function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
@@ -276,14 +278,271 @@ describe("anthropic auth mapping", () => {
   it("routed chat surfaces provider_auth_error as 502 through HTTP", async () => {
     vi.stubGlobal("fetch", async () => new Response("bad key", { status: 401 }));
     const app = Fastify();
-    const providers = new Map<string, ProviderAdapter>([
-      ["mock", new MockProvider()],
-      ["anthropic", new AnthropicAdapter({ baseURL: "https://api.anthropic.com", apiKey: "bad", defaultModel: "claude-4" })],
-    ]);
-    registerChatRoutes(app, providers.get("mock")!, cfg(), new InMemoryCache(), { providers });
+    // Single-target chain: nowhere to fail over, so the auth error surfaces.
+    // (With a healthy fallback in-map, T14 fails over instead — see T14 tests.)
+    const anthropic = new AnthropicAdapter({ baseURL: "https://api.anthropic.com", apiKey: "bad", defaultModel: "claude-4" });
+    const providers = new Map<string, ProviderAdapter>([["anthropic", anthropic]]);
+    registerChatRoutes(app, anthropic, cfg(), new InMemoryCache(), { providers });
     const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "claude-4", messages: [{ role: "user", content: "hi" }] } });
     expect(res.statusCode).toBe(502);
     expect(res.json().error.code).toBe("provider_auth_error");
+    await app.close();
+  });
+});
+
+describe("T14 fallback", () => {
+  function mockCounted(name: string, failure: "rate_limited" | "server_error" | null, counter: { calls: number }): ProviderAdapter {
+    const inner = new MockProvider({ delayMs: 0, failure });
+    return {
+      name,
+      capabilities: inner.capabilities,
+      async chat(req: ChatRequest, signal: AbortSignal): Promise<ChatResponse> {
+        counter.calls++;
+        return inner.chat(req, signal);
+      },
+      async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
+        counter.calls++;
+        yield* inner.chatStream(req, signal);
+      },
+    };
+  }
+
+  function fallbackApp(primary: ProviderAdapter, fallback: ProviderAdapter) {
+    const providers = new Map<string, ProviderAdapter>([
+      ["primary", primary],
+      ["fallback", fallback],
+    ]);
+    const app = Fastify();
+    const cache = new InMemoryCache();
+    registerChatRoutes(app, primary, cfg(), cache, { providers });
+    return { app, providers, cache };
+  }
+
+  it("primary 500 -> automatic 200 from fallback with x-fallback", async () => {
+    metrics.reset();
+    const primaryCalls = { calls: 0 };
+    const fallbackCalls = { calls: 0 };
+    const primary = mockCounted("alpha", "server_error", primaryCalls);
+    const fallback = mockCounted("beta", null, fallbackCalls);
+    const { app } = fallbackApp(primary, fallback);
+    const res = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "user", content: "t14 primary 500" }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-provider"]).toBe("beta");
+    expect(res.headers["x-fallback"]).toBe("true");
+    expect(res.headers["x-cache"]).toBe("MISS");
+    expect(res.json().choices[0].message.content).toContain("mock echo");
+    expect(primaryCalls.calls).toBe(3);
+    expect(fallbackCalls.calls).toBe(1);
+    const snap = (await app.inject({ method: "GET", url: "/metrics" })).json() as { fallback_count: number };
+    expect(snap.fallback_count).toBeGreaterThanOrEqual(1);
+    await app.close();
+  });
+
+  it("all targets down -> 502 with no leaked internals", async () => {
+    metrics.reset();
+    const primaryCalls = { calls: 0 };
+    const fallbackCalls = { calls: 0 };
+    const primary = mockCounted("alpha", "server_error", primaryCalls);
+    const fallback = mockCounted("beta", "server_error", fallbackCalls);
+    const { app } = fallbackApp(primary, fallback);
+    const res = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "user", content: "t14 all down" }] },
+    });
+    expect(res.statusCode).toBe(502);
+    const body = res.json();
+    expect(body.error.code).toBeTruthy();
+    expect(body.error.request_id).toBeTruthy();
+    expect(body.error.message).toBeTruthy();
+    const raw = res.body;
+    expect(raw).not.toContain("node_modules");
+    expect(raw).not.toContain("GatewayError");
+    expect(raw).not.toMatch(/\.ts:\d+/);
+    expect(raw).not.toContain("at ");
+    expect(primaryCalls.calls).toBe(3);
+    expect(fallbackCalls.calls).toBe(3);
+    const snap = (await app.inject({ method: "GET", url: "/metrics" })).json() as { provider_errors: number; fallback_count: number };
+    expect(snap.provider_errors).toBeGreaterThanOrEqual(1);
+    expect(snap.fallback_count).toBeGreaterThanOrEqual(1);
+    await app.close();
+  });
+
+  it("breaker opens and skips the primary while fallback serves", async () => {
+    metrics.reset();
+    const primaryCalls = { calls: 0 };
+    const fallbackCalls = { calls: 0 };
+    const primary = mockCounted("alpha", "server_error", primaryCalls);
+    const fallback = mockCounted("beta", null, fallbackCalls);
+    const { app } = fallbackApp(primary, fallback);
+    for (let i = 0; i < 3; i++) {
+      const r = await app.inject({
+        method: "POST", url: "/v1/chat/completions",
+        payload: { model: "m", messages: [{ role: "user", content: `t14 breaker ${i}` }] },
+      });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers["x-fallback"]).toBe("true");
+    }
+    expect(primaryCalls.calls).toBe(9);
+    expect(fallbackCalls.calls).toBe(3);
+    const snapOpen = (await app.inject({ method: "GET", url: "/metrics" })).json() as { breaker_open: number };
+    expect(snapOpen.breaker_open).toBe(1);
+    const probe = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "user", content: "t14 breaker probe" }] },
+    });
+    expect(probe.statusCode).toBe(200);
+    expect(probe.headers["x-provider"]).toBe("beta");
+    expect(probe.headers["x-fallback"]).toBe("true");
+    expect(primaryCalls.calls).toBe(9);
+    expect(fallbackCalls.calls).toBe(4);
+    const snapStill = (await app.inject({ method: "GET", url: "/metrics" })).json() as { breaker_open: number };
+    expect(snapStill.breaker_open).toBe(1);
+    await app.close();
+  });
+
+  it("streaming pre-first-token failover serves a full SSE stream from fallback", async () => {
+    metrics.reset();
+    const primaryCalls = { calls: 0 };
+    const fallbackCalls = { calls: 0 };
+    const primary = mockCounted("alpha", "server_error", primaryCalls);
+    const fallback = mockCounted("beta", null, fallbackCalls);
+    const { app } = fallbackApp(primary, fallback);
+    const res = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "user", content: "t14 stream failover" }], stream: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(String(res.headers["content-type"])).toContain("text/event-stream");
+    expect(res.headers["x-cache"]).toBe("BYPASS");
+    expect(res.headers["x-provider"]).toBe("beta");
+    expect(res.headers["x-fallback"]).toBe("true");
+    expect(res.body).toContain("data: [DONE]");
+    expect(res.body).toContain("mock ");
+    expect(primaryCalls.calls).toBe(3);
+    expect(fallbackCalls.calls).toBe(1);
+    const snap = (await app.inject({ method: "GET", url: "/metrics" })).json() as { fallback_count: number };
+    expect(snap.fallback_count).toBeGreaterThanOrEqual(1);
+    await app.close();
+  });
+
+  it("no mid-SSE provider switch: partial chunk kept, fallback never called", async () => {
+    metrics.reset();
+    const primaryCalls = { calls: 0 };
+    const fallbackCalls = { calls: 0 };
+    const oneChunkFail: ProviderAdapter = {
+      name: "alpha",
+      capabilities: { chat: true, streaming: true, tools: false, json: false, systemMessages: true, maxTokens: true },
+      async chat(_req: ChatRequest, _signal: AbortSignal): Promise<ChatResponse> {
+        primaryCalls.calls++;
+        throw new GatewayError(502, "provider_error", "mid fail", true);
+      },
+      async *chatStream(_req: ChatRequest, _signal: AbortSignal): AsyncIterable<StreamChunk> {
+        primaryCalls.calls++;
+        yield { delta: "partial-" };
+        throw new GatewayError(502, "provider_error", "mid-stream boom", true);
+      },
+    };
+    const fallback = stub("beta", fallbackCalls);
+    const providers = new Map<string, ProviderAdapter>([["primary", oneChunkFail], ["fallback", fallback]]);
+    const app = Fastify();
+    registerChatRoutes(app, oneChunkFail, cfg(), new InMemoryCache(), { providers });
+    const res = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "user", content: "t14 mid stream" }], stream: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-provider"]).toBe("alpha");
+    expect(res.body).toContain("partial-");
+    expect(res.body).not.toContain("beta reply");
+    expect(res.body).not.toContain("data: [DONE]");
+    expect(primaryCalls.calls).toBe(1);
+    expect(fallbackCalls.calls).toBe(0);
+    await app.close();
+  });
+
+  it("fallback answers live under the serving key only (INV-7)", async () => {
+    metrics.reset();
+    const primaryCalls = { calls: 0 };
+    const fallbackCalls = { calls: 0 };
+    const primary = mockCounted("alpha", "server_error", primaryCalls);
+    const fallback = mockCounted("beta", null, fallbackCalls);
+    const { app, cache } = fallbackApp(primary, fallback);
+    const messages = [{ role: "user" as const, content: "t14 serving key probe" }];
+    const payload = { model: "m", messages };
+    const canonical = { model: "m", messages, temperature: 1.0, stream: false };
+    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", payload });
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["x-cache"]).toBe("MISS");
+    expect(first.headers["x-provider"]).toBe("beta");
+    expect(first.headers["x-fallback"]).toBe("true");
+    expect(primaryCalls.calls).toBe(3);
+    expect(fallbackCalls.calls).toBe(1);
+    const primaryKey = buildExactCacheKey("alpha", canonical).key;
+    const servingKey = buildExactCacheKey("beta", canonical).key;
+    expect(primaryKey).not.toBe(servingKey);
+    expect(await cache.get(primaryKey)).toBeNull();
+    expect(await cache.get(servingKey)).not.toBeNull();
+    for (const p of ["t14 serving key trip 1", "t14 serving key trip 2"]) {
+      const r = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: p }] } });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers["x-fallback"]).toBe("true");
+    }
+    expect(primaryCalls.calls).toBe(9);
+    expect(fallbackCalls.calls).toBe(3);
+    expect(((await app.inject({ method: "GET", url: "/metrics" })).json() as { breaker_open: number }).breaker_open).toBe(1);
+    const replay = await app.inject({ method: "POST", url: "/v1/chat/completions", payload });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.headers["x-cache"]).toBe("HIT");
+    expect(replay.headers["x-provider"]).toBe("beta");
+    expect(replay.headers["x-fallback"]).toBe("true");
+    expect(primaryCalls.calls).toBe(9);
+    expect(fallbackCalls.calls).toBe(3);
+    await app.close();
+  });
+
+  it("non-retryable failure fails over after exactly 1 primary attempt", async () => {
+    metrics.reset();
+    const primaryCalls = { calls: 0 };
+    const fallbackCalls = { calls: 0 };
+    const fatal: ProviderAdapter = {
+      name: "gamma",
+      capabilities: { chat: true, streaming: true, tools: false, json: false, systemMessages: true, maxTokens: true },
+      async chat(req: ChatRequest, _signal: AbortSignal): Promise<ChatResponse> {
+        primaryCalls.calls++;
+        throw new GatewayError(502, "provider_not_found", "no such model", false);
+      },
+      async *chatStream(_req: ChatRequest, _signal: AbortSignal): AsyncIterable<StreamChunk> {
+        primaryCalls.calls++;
+        throw new GatewayError(502, "provider_not_found", "no such model", false);
+      },
+    };
+    const fallback = mockCounted("beta", null, fallbackCalls);
+    const providers = new Map<string, ProviderAdapter>([["primary", fatal], ["fallback", fallback]]);
+    const app = Fastify();
+    registerChatRoutes(app, fatal, cfg(), new InMemoryCache(), { providers });
+    const res = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "user", content: "t14 fatal failover" }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-provider"]).toBe("beta");
+    expect(res.headers["x-fallback"]).toBe("true");
+    expect(primaryCalls.calls).toBe(1);
+    expect(fallbackCalls.calls).toBe(1);
+    expect(res.json().model).toBe("m");
+    const streamRes = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "user", content: "t14 fatal stream" }], stream: true },
+    });
+    expect(streamRes.statusCode).toBe(200);
+    expect(streamRes.headers["x-provider"]).toBe("beta");
+    expect(streamRes.headers["x-fallback"]).toBe("true");
+    expect(streamRes.body).toContain("data: [DONE]");
+    expect(primaryCalls.calls).toBe(2);
+    expect(fallbackCalls.calls).toBe(2);
     await app.close();
   });
 });

@@ -15,6 +15,8 @@ export interface MetricsSnapshot {
   semantic_hits: number;
   semantic_misses: number;
   semantic_errors: number;
+  fallback_count: number;
+  breaker_open: number;
   semantic_lookups: number;
   avg_semantic_score: number;
   cache_lookups: number;
@@ -40,6 +42,8 @@ const ZERO: MetricsSnapshot = {
   semantic_hits: 0,
   semantic_misses: 0,
   semantic_errors: 0,
+  fallback_count: 0,
+  breaker_open: 0,
   semantic_lookups: 0,
   avg_semantic_score: 0,
   cache_lookups: 0,
@@ -63,7 +67,9 @@ export type CounterName =
   | "cache_write_failed"
   | "semantic_hits"
   | "semantic_misses"
-  | "semantic_errors";
+  | "semantic_errors"
+  | "fallback_count"
+  | "breaker_open";
 
 export class GatewayMetrics {
   private c: Record<CounterName, number> = {
@@ -79,6 +85,8 @@ export class GatewayMetrics {
     semantic_hits: 0,
     semantic_misses: 0,
     semantic_errors: 0,
+    fallback_count: 0,
+    breaker_open: 0,
   };
   private cacheLookups = 0;
   private cacheLatencyTotal = 0;

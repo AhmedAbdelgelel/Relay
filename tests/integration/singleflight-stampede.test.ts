@@ -109,11 +109,11 @@ describe("single-flight stampede", () => {
       ),
     );
     for (const r of failed) expect(r.statusCode).toBe(502);
-    expect(calls).toBe(1); // one leader execution shared by 5 waiters
+    expect(calls).toBe(3); // one shared leader execution x (1 + 2 bounded retries); followers still coalesced
     shouldFail = false;
     const retry = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
     expect(retry.statusCode).toBe(200);
-    expect(calls).toBe(2);
+    expect(calls).toBe(4); // recovery adds exactly one more execution, never poisons
     await app.close();
   });
 });

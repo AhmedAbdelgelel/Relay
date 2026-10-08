@@ -215,7 +215,7 @@ describe.each([
     expect(e2.statusCode).toBe(502);
     expect(e1.json()?.error?.code).toBe(e2.json()?.error?.code);
     expect(e2.headers["x-cache"]).not.toBe("HIT");
-    expect(calls()).toBe(2);
+    expect(calls()).toBe(6); // 2 failed requests x (1 + 2 bounded retries); still never admitted
     await app.close();
   });
 });
