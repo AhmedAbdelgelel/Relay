@@ -720,7 +720,7 @@ T14 (lands before eval so T15 defends final reuse semantics).
 
 ## T17 - Exact cache must not admit empty responses (INV-8 gap)
 
-Status: pending
+Status: completed
 
 ### Goal
 

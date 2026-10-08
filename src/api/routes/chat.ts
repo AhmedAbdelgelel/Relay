@@ -230,7 +230,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             // BEFORE the caches see it, so an exact hit and a semantic hit both
             // return the same clean text and stored blobs stay canonical.
             const out: ChatResponse = { ...raw, content: normalizeChatContent(raw.content) };
-            if (useCache) {
+            if (useCache && out.content.trim() !== "") {
               const payload: CachedChatResponse = {
                 content: out.content,
                 model: out.model,

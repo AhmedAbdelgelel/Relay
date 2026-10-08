@@ -188,4 +188,42 @@ describe("x-cache-hash (D3)", () => {
     expect(other.headers["x-cache-hash"]).not.toBe(base.headers["x-cache-hash"]);
     await app.close();
   });
+
+  it("empty provider reply is served once but never admitted (INV-8)", async () => {
+    const app = Fastify();
+    const cache = new InMemoryCache();
+    let calls = 0;
+    const provider = new MockProvider();
+    const orig = provider.chat.bind(provider);
+    provider.chat = (async (...a: Parameters<typeof orig>) => {
+      calls++;
+      const res = await orig(...a);
+      return { ...res, content: "" };
+    }) as typeof orig;
+    registerChatRoutes(app, provider, cfg(), cache);
+    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["x-cache"]).toBe("MISS");
+    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    expect(second.statusCode).toBe(200);
+    expect(second.headers["x-cache"]).toBe("MISS");
+    expect(calls).toBe(2);
+    await app.close();
+  });
+
+  it("whitespace-only provider reply is never admitted", async () => {
+    const app = Fastify();
+    const cache = new InMemoryCache();
+    const provider = new MockProvider();
+    const orig = provider.chat.bind(provider);
+    provider.chat = (async (...a: Parameters<typeof orig>) => {
+      const res = await orig(...a);
+      return { ...res, content: "   \n  " };
+    }) as typeof orig;
+    registerChatRoutes(app, provider, cfg(), cache);
+    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    expect(second.headers["x-cache"]).toBe("MISS");
+    await app.close();
+  });
 });
