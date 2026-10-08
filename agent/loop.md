@@ -667,7 +667,7 @@ T16 (evaluates the final reuse semantics).
 
 ## T16 - Policy/admission depth (tenant + system fingerprint + policy version)
 
-Status: pending
+Status: completed
 
 ### Goal
 

@@ -44,17 +44,22 @@ describe("PgVectorStore (SQL contract, no live Postgres)", () => {
         max_tokens: 512,
         model: "m1",
         provider: "mock",
+        tenant_id: "t1",
+        system_fingerprint: "fp",
+        policy_version: 1,
         similarity: 0.97,
       },
     ]);
     const s = new PgVectorStore(db);
     const hits = await s.findSimilar(vec(), { tenant: "t1", provider: "mock", model: "m1" }, { threshold: 0.92, topK: 3 });
     expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatchObject({ id: expect.any(String), similarity: 0.97, provider: "mock" });
+    expect(hits[0]).toMatchObject({ id: expect.any(String), similarity: 0.97, provider: "mock", tenant: "t1", systemFingerprint: "fp", policyVersion: 1 });
     const q = db.seen[0]!;
     expect(q.text).toContain("1 - (embedding <=> $1::vector)");
     expect(q.text).toContain("tenant_id = $2");
     expect(q.text).toContain("expires_at > now()");
+    expect(q.text).toContain("system_fingerprint");
+    expect(q.text).toContain("policy_version");
     expect(q.params?.[1]).toBe("t1");
     expect(q.params?.[4]).toBe(0.92);
     expect(q.params?.[5]).toBe(3);
@@ -79,11 +84,16 @@ describe("PgVectorStore (SQL contract, no live Postgres)", () => {
       tenant: "t", provider: "mock", model: "m", promptHash: "h", promptText: "hi",
       temperature: 0.7, maxTokens: 100, embedding: vec(), content: "yo",
       usage: { prompt_tokens: 3, completion_tokens: 4 }, ttlSeconds: 60,
+      systemFingerprint: "fp", policyVersion: 1,
     });
     const q = db.seen[0]!;
     expect(q.text).toContain("ON CONFLICT (tenant_id, provider, model, prompt_hash)");
     expect(q.text).toContain("$8::vector");
+    expect(q.text).toContain("system_fingerprint");
+    expect(q.text).toContain("policy_version");
     expect(q.params?.[3]).toBe("h");
+    expect(q.params?.[12]).toBe("fp");
+    expect(q.params?.[13]).toBe(1);
   });
 
   it("save: wrong dim is a silent no-op", async () => {
@@ -91,6 +101,7 @@ describe("PgVectorStore (SQL contract, no live Postgres)", () => {
     await new PgVectorStore(db).save({
       tenant: "t", provider: "p", model: "m", promptHash: "h", promptText: "hi",
       temperature: 1, embedding: [1], content: "c", ttlSeconds: 60,
+      systemFingerprint: "fp", policyVersion: 1,
     });
     expect(db.seen).toHaveLength(0);
   });
@@ -118,6 +129,15 @@ describe("PgVectorStore (SQL contract, no live Postgres)", () => {
     expect(all).toContain("CREATE TABLE IF NOT EXISTS semantic_cache");
     expect(all).toContain("vector(768)");
     expect(all).toContain("hnsw");
+  });
+
+  it("migrate: upgrades existing tables with the identity columns", async () => {
+    const db = fakeDb();
+    await migrateSemanticCache(db);
+    const all = db.seen.map((s) => s.text).join("\n");
+    expect(all).toContain("system_fingerprint");
+    expect(all).toContain("policy_version");
+    expect(all).toContain("ADD COLUMN IF NOT EXISTS");
   });
 
   it("createPgClient wraps pg Pool (query delegates, close ends)", async () => {

@@ -16,7 +16,7 @@ import type { GatewayConfig } from "../../infrastructure/config.js";
 import { toGatewayError } from "../../infrastructure/errors.js";
 import { log } from "../../infrastructure/logger.js";
 import { metrics } from "../../observability/metrics.js";
-import { isReusableSemantic } from "../../policy/reuse.js";
+import { isReusableSemantic, systemFingerprint, POLICY_VERSION } from "../../policy/reuse.js";
 import type { ProviderAdapter } from "../../providers/ProviderAdapter.js";
 import { missingCapabilities } from "../../providers/capabilities.js";
 import { providerForModel } from "../../providers/factory.js";
@@ -193,7 +193,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
               { threshold: cfg.semanticThreshold, topK: cfg.semanticTopK },
             );
             for (const hit of candidates) {
-              const decision = isReusableSemantic(req, hit, { provider: active.name, threshold: cfg.semanticThreshold });
+              const decision = isReusableSemantic(req, hit, { provider: active.name, threshold: cfg.semanticThreshold, tenant });
               if (!decision.reusable) continue;
               const latency = Date.now() - start;
               metrics.inc("semantic_hits");
@@ -285,6 +285,8 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
                   content: out.content,
                   usage: out.usage,
                   ttlSeconds: cfg.semanticTtlSec,
+                  systemFingerprint: systemFingerprint(req),
+                  policyVersion: POLICY_VERSION,
                 });
               } catch (err) {
                 metrics.inc("semantic_errors");

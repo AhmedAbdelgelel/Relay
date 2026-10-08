@@ -16,6 +16,7 @@ function entry(promptHash: string): SemanticEntry {
     tenant: "default", provider: "mock", model: "m1", promptHash,
     promptText: "hello", temperature: 1, embedding: unit(0),
     content: "answer", ttlSeconds: 3600,
+    systemFingerprint: "fp", policyVersion: 1,
   };
 }
 

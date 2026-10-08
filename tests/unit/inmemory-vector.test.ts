@@ -20,6 +20,8 @@ function entry(over: Partial<SemanticEntry> = {}): SemanticEntry {
     embedding: unit(0),
     content: "answer",
     ttlSeconds: 3600,
+    systemFingerprint: "fp",
+    policyVersion: 1,
     ...over,
   };
 }

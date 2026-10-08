@@ -6,7 +6,8 @@
 // agent/implementation.md Part B).
 //
 // Depends on a minimal SqlClient so tests inject a fake and prod passes a
-// node-postgres Pool. Table DDL lives in db/migrations/001_semantic_cache.sql.
+// node-postgres Pool. Table DDL is embedded below (migrateSemanticCache);
+// db/migrations/*.sql are the manual-apply records of the same migrations.
 
 import { Pool } from "pg";
 import { EMBEDDING_DIM } from "../embeddings/EmbeddingProvider.js";
@@ -33,6 +34,9 @@ interface HitRow {
   max_tokens: number | null;
   model: string;
   provider: string;
+  tenant_id: string;
+  system_fingerprint: string | null;
+  policy_version: number | null;
   similarity: number;
 }
 
@@ -58,7 +62,8 @@ export class PgVectorStore implements SemanticCacheStore {
     const vec = toVectorLiteral(embedding);
     const { rows } = await this.db.query<HitRow>(
       `SELECT id, prompt_text, content, usage_prompt, usage_completion,
-              temperature, max_tokens, model, provider,
+              temperature, max_tokens, model, provider, tenant_id,
+              system_fingerprint, policy_version,
               1 - (embedding <=> $1::vector) AS similarity
          FROM semantic_cache
         WHERE tenant_id = $2 AND provider = $3 AND model = $4
@@ -80,6 +85,9 @@ export class PgVectorStore implements SemanticCacheStore {
       maxTokens: r.max_tokens ?? undefined,
       model: r.model,
       provider: r.provider,
+      tenant: r.tenant_id,
+      systemFingerprint: r.system_fingerprint,
+      policyVersion: r.policy_version,
       similarity: Number(r.similarity),
     }));
   }
@@ -90,8 +98,9 @@ export class PgVectorStore implements SemanticCacheStore {
       `INSERT INTO semantic_cache
          (tenant_id, provider, model, prompt_hash, prompt_text,
           temperature, max_tokens, embedding, content,
-          usage_prompt, usage_completion, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector,$9,$10,$11, now() + ($12 || ' seconds')::interval)
+          usage_prompt, usage_completion, expires_at,
+          system_fingerprint, policy_version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector,$9,$10,$11, now() + ($12 || ' seconds')::interval, $13, $14)
        ON CONFLICT (tenant_id, provider, model, prompt_hash)
        DO UPDATE SET prompt_text = EXCLUDED.prompt_text,
                      temperature = EXCLUDED.temperature,
@@ -100,7 +109,9 @@ export class PgVectorStore implements SemanticCacheStore {
                      content = EXCLUDED.content,
                      usage_prompt = EXCLUDED.usage_prompt,
                      usage_completion = EXCLUDED.usage_completion,
-                     expires_at = EXCLUDED.expires_at`,
+                     expires_at = EXCLUDED.expires_at,
+                     system_fingerprint = EXCLUDED.system_fingerprint,
+                     policy_version = EXCLUDED.policy_version`,
       [
         entry.tenant,
         entry.provider,
@@ -114,6 +125,8 @@ export class PgVectorStore implements SemanticCacheStore {
         entry.usage?.prompt_tokens ?? null,
         entry.usage?.completion_tokens ?? null,
         String(Math.max(1, Math.floor(entry.ttlSeconds))),
+        entry.systemFingerprint,
+        entry.policyVersion,
       ],
     );
   }
@@ -171,6 +184,8 @@ const MIGRATION_TABLE = `CREATE TABLE IF NOT EXISTS semantic_cache (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '1 hour',
   hits INTEGER NOT NULL DEFAULT 0,
+  system_fingerprint TEXT NULL,
+  policy_version INTEGER NULL,
   UNIQUE (tenant_id, provider, model, prompt_hash)
 )`;
 
@@ -187,6 +202,11 @@ export async function migrateSemanticCache(db: SqlClient): Promise<void> {
     );
   }
   await db.query(MIGRATION_TABLE);
+  await db.query(
+    `ALTER TABLE semantic_cache
+       ADD COLUMN IF NOT EXISTS system_fingerprint TEXT NULL,
+       ADD COLUMN IF NOT EXISTS policy_version INTEGER NULL`,
+  );
   try {
     await db.query(
       `CREATE INDEX IF NOT EXISTS semantic_cache_embedding_hnsw

@@ -22,6 +22,8 @@ export interface SemanticEntry {
   content: string;
   usage?: { prompt_tokens: number; completion_tokens: number };
   ttlSeconds: number;
+  systemFingerprint: string;
+  policyVersion: number;
 }
 
 export interface SemanticHit {
@@ -33,6 +35,11 @@ export interface SemanticHit {
   maxTokens?: number;
   model: string;
   provider: string;
+  tenant: string;
+  /** Instruction identity; null = legacy row admitted before fingerprinting (check skipped). */
+  systemFingerprint?: string | null;
+  /** Policy version at admission; null = legacy row (check skipped). */
+  policyVersion?: number | null;
   /** Cosine similarity in [0,1]; higher = closer. */
   similarity: number;
 }

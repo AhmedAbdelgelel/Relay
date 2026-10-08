@@ -73,6 +73,9 @@ export class InMemoryVectorStore implements SemanticCacheStore {
           maxTokens: r.maxTokens,
           model: r.model,
           provider: r.provider,
+          tenant: r.tenant,
+          systemFingerprint: r.systemFingerprint,
+          policyVersion: r.policyVersion,
           similarity,
         });
       }

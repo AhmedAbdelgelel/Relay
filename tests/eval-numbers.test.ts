@@ -10,7 +10,7 @@ import {
 } from "../src/embeddings/EmbeddingProvider.js";
 import type { GatewayConfig } from "../src/infrastructure/config.js";
 import { metrics } from "../src/observability/metrics.js";
-import { isReusableSemantic } from "../src/policy/reuse.js";
+import { isReusableSemantic, systemFingerprint, POLICY_VERSION } from "../src/policy/reuse.js";
 import { registerChatRoutes } from "../src/api/routes/chat.js";
 import { MockProvider } from "../src/providers/MockProvider.js";
 
@@ -88,6 +88,8 @@ async function seed(store: InMemoryVectorStore): Promise<void> {
     tenant: "default", provider: "mock", model: "m", promptHash: "seed",
     promptText: "seed", temperature: 1.0, maxTokens: undefined,
     embedding: REF, content: "seed answer", usage: undefined, ttlSeconds: 3600,
+    systemFingerprint: systemFingerprint({ model: "m", messages: [{ role: "user" as const, content: "q" }], temperature: 1.0, stream: false }),
+    policyVersion: POLICY_VERSION,
   });
 }
 
@@ -106,7 +108,7 @@ async function sweep(store: InMemoryVectorStore, thresholds: number[]): Promise<
         const d = isReusableSemantic(
           { model: "m", messages: [{ role: "user" as const, content: "q" }], temperature: 1.0, stream: false },
           { ...hit, temperature: 1.0, maxTokens: undefined },
-          { provider: "mock", threshold },
+          { provider: "mock", threshold, tenant: "default" },
         );
         if (d.reusable) { reused = true; break; }
       }

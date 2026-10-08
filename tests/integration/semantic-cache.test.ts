@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { registerChatRoutes } from "../../src/api/routes/chat.js";
 import { InMemoryCache } from "../../src/cache/InMemoryCache.js";
 import { InMemoryVectorStore } from "../../src/cache/InMemoryVectorStore.js";
+import type { SemanticCacheStore, SemanticFilter } from "../../src/cache/SemanticCacheStore.js";
 import { EMBEDDING_DIM, type EmbeddingProvider } from "../../src/embeddings/EmbeddingProvider.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { metrics } from "../../src/observability/metrics.js";
@@ -163,6 +164,67 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
     const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "hello" }] } });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-cache"]).toBe("MISS");
+    await app.close();
+  });
+
+  it("same user text under a changed system prompt never reuses", async () => {
+    const app = Fastify();
+    const store = new InMemoryVectorStore();
+    let calls = 0;
+    const provider = new MockProvider();
+    const orig = provider.chat.bind(provider);
+    provider.chat = (async (...a: Parameters<typeof orig>) => { calls++; return orig(...a); }) as typeof orig;
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
+    const seed = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "system", content: "sys-A" }, { role: "user", content: "What is an LLM gateway?" }] },
+    });
+    expect(seed.headers["x-cache"]).toBe("MISS");
+    const changed = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "system", content: "sys-B" }, { role: "user", content: "What is an LLM gateway?" }] },
+    });
+    expect(changed.headers["x-cache"]).toBe("MISS");
+    expect(calls).toBe(2);
+    const same = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      payload: { model: "m", messages: [{ role: "system", content: "sys-A" }, { role: "user", content: "Explain what an LLM gateway does?" }] },
+    });
+    expect(same.headers["x-cache"]).toBe("SEMANTIC_HIT");
+    await app.close();
+  });
+
+  it("policy re-checks tenant even when the store leaks across tenants", async () => {
+    const app = Fastify();
+    const inner = new InMemoryVectorStore();
+    const leaky: SemanticCacheStore = {
+      name: inner.name,
+      save: inner.save.bind(inner),
+      recordHit: inner.recordHit.bind(inner),
+      ping: inner.ping.bind(inner),
+      close: inner.close.bind(inner),
+      findSimilar: (embedding: number[], _filter: SemanticFilter, opts: { threshold: number; topK: number }) =>
+        inner.findSimilar(embedding, { tenant: "tenant-a", provider: "mock", model: "m" }, opts),
+    };
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { semanticStore: leaky, embedder: new ParaphraseEmbedder() });
+    const seed = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      headers: { "x-tenant-id": "tenant-a" },
+      payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] },
+    });
+    expect(seed.headers["x-cache"]).toBe("MISS");
+    const same = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      headers: { "x-tenant-id": "tenant-a" },
+      payload: { model: "m", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] },
+    });
+    expect(same.headers["x-cache"]).toBe("SEMANTIC_HIT");
+    const other = await app.inject({
+      method: "POST", url: "/v1/chat/completions",
+      headers: { "x-tenant-id": "tenant-b" },
+      payload: { model: "m", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] },
+    });
+    expect(other.headers["x-cache"]).toBe("MISS");
     await app.close();
   });
 });
