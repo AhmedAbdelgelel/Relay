@@ -5,10 +5,13 @@ import { registerChatRoutes } from "../../src/api/routes/chat.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { OpenAICompatibleProvider } from "../../src/providers/OpenAICompatibleProvider.js";
 
-// Live-Gemini prompt tests. Skipped without a key so CI stays green on mock only.
-// Run with: npm test (picks these up automatically when .env has GEMINI_API_KEY).
+// Live-Gemini prompt tests. Opt-in only, matching tests/integration/redis-live.test.ts,
+// because they call the real Gemini endpoint: they must never run in the default
+// `npm test` sweep, which stays hermetic, offline and free.
+// Run with: npm run test:live  (or: GEMINI_LIVE_TEST=1 npm test).
 // These hit the real Gemini OpenAI-compat endpoint — non-stream, stream, and
 // the full gateway HTTP path (validation + headers + OpenAI response shape).
+const LIVE = process.env.GEMINI_LIVE_TEST === "1";
 const HAS_KEY = !!process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const BASE_URL =
@@ -57,7 +60,7 @@ function liveCfg(): GatewayConfig {
   };
 }
 
-describe.skipIf(!HAS_KEY)("gemini live prompt (real upstream)", () => {
+describe.skipIf(!LIVE || !HAS_KEY)("gemini live prompt (real upstream)", () => {
   it(
     "chat() prompt returns non-empty content + usage",
     async () => {

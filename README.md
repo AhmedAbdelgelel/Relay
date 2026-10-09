@@ -36,6 +36,7 @@ Prerequisites: Node.js 18+.
 
 ```bash
 npm install
+cp .env.example .env   # optional: every variable is documented there
 npm run dev        # serves http://localhost:3000 (mock provider, zero setup)
 ```
 
@@ -69,9 +70,9 @@ Key configuration (`src/infrastructure/config.ts` is the only file that reads en
 | `SEMANTIC_STORE` / `DATABASE_URL` | `memory` / — | `pgvector` for production |
 | `GATEWAY_API_KEYS` / `CRED_ENC_KEY` | — | Dev seed keys (`tenant:provider:name:key`); encryption key for stored provider credentials |
 
-## Test report (measured, Oct 8 2026)
+## Test report
 
-Full suite green: **31 files passed, 286 tests passed, 3 skipped** (the skips are an opt-in live-Redis file needing a local server), plus a clean `tsc` typecheck. Live-provider tests run only when keys are present, so CI stays offline and free. Run it yourself with `npm test` / `npm run typecheck`.
+Full suite green, verified across three consecutive runs: **31 files passed, 2 skipped (33 total)** — **336 tests passed, 6 skipped, 0 failed (342 total)** — plus a clean `tsc` typecheck. The two skipped files are the opt-in live tests (real Gemini via `npm run test:live`, real Redis via `REDIS_LIVE_TEST=1`). No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free. Run it yourself with `npm test` / `npm run typecheck`.
 
 Measured performance (mock provider with 50 ms simulated latency):
 
@@ -93,10 +94,10 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/types/types.test.ts` | 12 | Type-level contracts |
 | `tests/contract/provider-conformance.test.ts` | 23 | Every adapter behaves identically |
 | `tests/contract/chat.contract.test.ts` | 10 | HTTP contract, headers, SSE, error mapping |
-| `tests/integration/exact-cache.test.ts` | 12 | HIT/MISS, eviction, hash discipline |
-| `tests/integration/semantic-cache.test.ts` | 7 | Paraphrase HIT, policy blocks, degradation |
-| `tests/integration/providers-routing.test.ts` | 13 | Prefix routing incl. OpenRouter free tier |
-| `tests/integration/provider.test.ts` | 4 | Timeout/429/502 normalization |
+| `tests/integration/exact-cache.test.ts` | 14 | HIT/MISS, eviction, hash discipline |
+| `tests/integration/semantic-cache.test.ts` | 9 | Paraphrase HIT, policy blocks, degradation |
+| `tests/integration/providers-routing.test.ts` | 20 | Prefix routing incl. OpenRouter free tier |
+| `tests/integration/provider.test.ts` | 5 | Timeout/429/502 normalization |
 | `tests/integration/openai-errors.test.ts` | 7 | Upstream error mapping |
 | `tests/integration/singleflight-stampede.test.ts` | 4 | 50→1 coalescing, metrics |
 | `tests/integration/response-normalization.test.ts` | 6 | Canonical answers incl. streams |
@@ -104,19 +105,21 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/integration/ui-live.test.ts` | 4 | Playground against a real server |
 | `tests/integration/playground-send.test.ts` | 2 | Playground send regression |
 | `tests/integration/gemini-live.test.ts` | 3 | Real Gemini upstream (opt-in) |
+| `tests/integration/redis-live.test.ts` | 3 | Real Redis round-trip (opt-in, skipped by default) |
 | `tests/cache-eval.test.ts` | 23 | Exact/semantic/TTL/degradation batteries |
 | `tests/eval-numbers.test.ts` | 4 | Latency numbers + avoided-call accounting |
 | `tests/unit/chat-ui.test.ts` | 35 | Playground UI behavior |
 | `tests/unit/response-normalizer.test.ts` | 23 | Markup stripping rules |
 | `tests/unit/inmemory-vector.test.ts` | 9 | Vector store incl. TTL |
-| `tests/unit/semantic-reuse.test.ts` | 11 | Policy reason matrix |
-| `tests/unit/semantic-config.test.ts` | 10 | Semantic misconfig fails loud |
+| `tests/unit/semantic-reuse.test.ts` | 17 | Policy reason matrix |
+| `tests/unit/semantic-config.test.ts` | 13 | Semantic misconfig fails loud |
 | `tests/unit/control-plane-smoke.test.ts` | 14 | Health/metrics/providers wiring |
-| `tests/unit/pgvector-sql.test.ts` | 10 | SQL contract for pgvector |
+| `tests/unit/pgvector-sql.test.ts` | 11 | SQL contract for pgvector |
 | `tests/unit/auth-config.test.ts` | 9 | Seed-key parsing + auth migration |
 | `tests/unit/embeddings.test.ts` | 5 | Embedder behavior + dimensions |
 | `tests/unit/normalize.test.ts` | 7 | Canonical key identity rules |
 | `tests/unit/singleflight.test.ts` | 5 | Coalescing incl. abort isolation |
+| `tests/unit/fallback.test.ts` | 31 | Fallback chain: jittered backoff, target breaker, error precedence |
 | `tests/unit/redis-commands.test.ts` | 4 | Redis command surface |
 | `tests/unit/inmemory-eviction.test.ts` | 4 | LRU bounds + TTL |
 | `tests/unit/vector-eviction.test.ts` | 2 | Vector-store bounds |
