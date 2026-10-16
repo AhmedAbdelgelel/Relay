@@ -49,7 +49,8 @@ export function createProviderFromEnv(cfg: GatewayConfig, mockOverrides?: { dela
     case "openrouter": {
       // OpenRouter speaks the OpenAI wire format (POST {base}/chat/completions,
       // Bearer auth, SSE + [DONE]) — reuse the standardized adapter (T-OR-1).
-      // The free tier needs no key, so none is demanded here.
+      // :free models are $0 but still need a free OpenRouter account key; no
+      // key is demanded here — a missing one surfaces as the upstream's 401.
       return new OpenAICompatibleProvider({
         name: "openrouter",
         baseURL: cfg.openRouterBaseUrl,
@@ -95,8 +96,9 @@ export function createProvidersFromEnv(cfg: GatewayConfig): Map<string, Provider
       defaultModel: cfg.anthropicModel,
     }));
   }
-  // OpenRouter always registered: the free tier needs no key, so routing to a
-  // :free model must work with zero setup. Keyed models still need OPEN_ROUTER_KEY.
+  // OpenRouter always registered so `:free` (and openrouter/…) routing resolves
+  // without extra setup. :free models are $0 but still need a free account key
+  // (OPEN_ROUTER_KEY); a missing key surfaces as the upstream's clean 401.
   map.set("openrouter", new OpenAICompatibleProvider({
     name: "openrouter",
     baseURL: cfg.openRouterBaseUrl,

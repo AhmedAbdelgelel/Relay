@@ -141,8 +141,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     anthropicApiKey: str(env, "ANTHROPIC_API_KEY"),
     anthropicBaseUrl: str(env, "ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
     anthropicModel: str(env, "ANTHROPIC_MODEL", "claude-4"),
-    // OPEN_ROUTER_KEY is the variable name in the project .env; a key is only
-    // required when PROVIDER=openrouter (free models otherwise need nothing).
+    // OPEN_ROUTER_KEY is the variable name in the project .env. :free models
+    // are $0 but still need a free OpenRouter account key; without one the
+    // upstream returns a clean 401 (no boot-time demand).
     openRouterKey: str(env, "OPEN_ROUTER_KEY"),
     openRouterBaseUrl: str(env, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
     openRouterModel: str(env, "OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),
