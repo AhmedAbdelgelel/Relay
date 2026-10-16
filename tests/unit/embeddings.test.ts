@@ -79,12 +79,14 @@ describe("embeddings", () => {
     expect(Math.abs(dot)).toBeLessThan(0.25);
   });
 
-  it("factory chooses mock/ollama/gemini", () => {
+  it("factory chooses mock/ollama/gemini/local", () => {
     expect(createEmbedderFromEnv(cfg({ embeddingProvider: "mock" })).name).toBe("mock");
     expect(createEmbedderFromEnv(cfg({ embeddingProvider: "ollama" })).name).toBe("ollama");
     expect(
       createEmbedderFromEnv(cfg({ embeddingProvider: "gemini", geminiApiKey: "k" })).name,
     ).toBe("gemini");
+    // local constructs eagerly but loads ONNX lazily (first embed only).
+    expect(createEmbedderFromEnv(cfg({ embeddingProvider: "local" })).name).toBe("local");
   });
 
   it("factory: gemini without key throws a clear error", () => {

@@ -4,6 +4,7 @@
 # package-lock.json, tsconfig.json.
 node_modules
 dist
+.cache
 .git
 .github
 .env

@@ -13,6 +13,7 @@
     "eval": "tsx scripts/eval/run.ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.1",
     "dotenv": "^16.4.5",
     "fastify": "^5.12.5",
     "ioredis": "^6.0.0",
