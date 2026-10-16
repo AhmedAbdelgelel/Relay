@@ -1,26 +1,281 @@
 @import "tailwindcss";
 
+/* Theme switching is driven by `data-theme` on <html> (set by the pre-paint
+   script in layout.tsx), not by the `prefers-color-scheme` media query, so a
+   manual choice always wins. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ── design tokens ────────────────────────────────────────────────────────
+   Light is the default canvas (matches the dsh settings screen). Values are
+   mapped into Tailwind via `@theme inline` below, so utilities like
+   bg-canvas / bg-surface / text-ink / text-ink-2 / border-line / bg-accent
+   resolve live through [data-theme]. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+
+  /* surfaces */
+  --canvas: #f9f8f8;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: rgba(0, 0, 0, 0.03);
+  --wash: rgba(0, 0, 0, 0.04);            /* hover wash */
+  --active: rgba(0, 0, 0, 0.05);          /* active nav pill */
+  --translucent: rgba(249, 248, 248, 0.78);
+
+  /* hairlines */
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.16);
+
+  /* text */
+  --ink: #1e232c;
+  --ink-2: rgba(0, 0, 0, 0.6);
+  --ink-3: rgba(0, 0, 0, 0.45);
+  --placeholder: #8691a1;
+
+  /* accent — focus rings, active nav icon tint, links (used sparingly) */
+  --accent: #4d6bfe;
+  --accent-ink: #3a65c2;
+  --accent-soft: rgba(77, 107, 254, 0.12);
+
+  /* buttons */
+  --btn: #1a1615;
+  --btn-text: #ffffff;
+  --btn-hover: #332e2c;
+
+  /* status */
+  --ok: #15803d;
+  --warn: #b45309;
+  --err: #dc2626;
+  --ok-soft: rgba(21, 128, 61, 0.1);
+  --warn-soft: rgba(180, 83, 9, 0.1);
+  --err-soft: rgba(220, 38, 38, 0.1);
+  --neutral-soft: rgba(0, 0, 0, 0.06);
+
+  /* elevation (dark theme disables shadows: borders carry the structure) */
+  --elevation-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --elevation-pop: 0 12px 32px rgba(0, 0, 0, 0.12);
+
+  /* scrollbars */
+  --scroll-thumb: rgba(0, 0, 0, 0.18);
+  --scroll-thumb-hover: rgba(0, 0, 0, 0.3);
+
+  /* type */
+  --font-app-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #0a0a0a;
+  --surface: #141414;
+  --surface-raised: #1a1a1a;
+  --surface-sunken: rgba(255, 255, 255, 0.03);
+  --wash: rgba(255, 255, 255, 0.06);
+  --active: rgba(255, 255, 255, 0.06);
+  --translucent: rgba(10, 10, 10, 0.78);
+
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  --ink: #e7e9ec;
+  --ink-2: rgba(255, 255, 255, 0.6);
+  --ink-3: rgba(255, 255, 255, 0.45);
+  --placeholder: rgba(255, 255, 255, 0.32);
+
+  --accent: #4d6bfe;
+  --accent-ink: #8fa2ff;
+  --accent-soft: rgba(77, 107, 254, 0.18);
+
+  --btn: #ffffff;
+  --btn-text: #0a0a0a;
+  --btn-hover: #dedede;
+
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --ok-soft: rgba(74, 222, 128, 0.14);
+  --warn-soft: rgba(251, 191, 36, 0.14);
+  --err-soft: rgba(248, 113, 113, 0.14);
+  --neutral-soft: rgba(255, 255, 255, 0.08);
+
+  --elevation-card: 0 0 #0000;
+  --elevation-pop: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+  --scroll-thumb: rgba(255, 255, 255, 0.16);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.28);
 }
 
+/* No-JS / pre-script fallback: dark OS preference still gets a dark canvas.
+   Once the inline script (or a toggle) sets data-theme, it wins — see the
+   `:not([data-theme])` guard. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --canvas: #0a0a0a;
+    --surface: #141414;
+    --surface-raised: #1a1a1a;
+    --surface-sunken: rgba(255, 255, 255, 0.03);
+    --wash: rgba(255, 255, 255, 0.06);
+    --active: rgba(255, 255, 255, 0.06);
+    --translucent: rgba(10, 10, 10, 0.78);
+
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.16);
+
+    --ink: #e7e9ec;
+    --ink-2: rgba(255, 255, 255, 0.6);
+    --ink-3: rgba(255, 255, 255, 0.45);
+    --placeholder: rgba(255, 255, 255, 0.32);
+
+    --accent: #4d6bfe;
+    --accent-ink: #8fa2ff;
+    --accent-soft: rgba(77, 107, 254, 0.18);
+
+    --btn: #ffffff;
+    --btn-text: #0a0a0a;
+    --btn-hover: #dedede;
+
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --ok-soft: rgba(74, 222, 128, 0.14);
+    --warn-soft: rgba(251, 191, 36, 0.14);
+    --err-soft: rgba(248, 113, 113, 0.14);
+    --neutral-soft: rgba(255, 255, 255, 0.08);
+
+    --elevation-card: 0 0 #0000;
+    --elevation-pop: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+    --scroll-thumb: rgba(255, 255, 255, 0.16);
+    --scroll-thumb-hover: rgba(255, 255, 255, 0.28);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── Tailwind theme mapping ─────────────────────────────────────────────── */
+@theme inline {
+  --font-sans: var(--font-app-sans);
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-sunken: var(--surface-sunken);
+  --color-wash: var(--wash);
+  --color-active: var(--active);
+  --color-translucent: var(--translucent);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-placeholder: var(--placeholder);
+
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-btn: var(--btn);
+  --color-btn-text: var(--btn-text);
+  --color-btn-hover: var(--btn-hover);
+
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn-soft: var(--warn-soft);
+  --color-err-soft: var(--err-soft);
+  --color-neutral-soft: var(--neutral-soft);
+
+  --radius-control: 10px;
+  --radius-card: 16px;
+  --radius-modal: 24px;
+  --radius-pill: 100px;
+
+  --shadow-card: var(--elevation-card);
+  --shadow-pop: var(--elevation-pop);
+}
+
+/* ── base ───────────────────────────────────────────────────────────────── */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-app-sans);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  ::selection {
+    background: rgba(77, 107, 254, 0.22);
+  }
+
+  /* 2px accent focus ring — keyboard users only. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Subtle scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--scroll-thumb);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scroll-thumb-hover);
+  }
+}
+
+/* Page enter: short fade/translate; neutralized by the reduced-motion rule. */
+@utility page-enter {
+  animation: page-enter 160ms ease-out both;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Respect user motion preferences everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
