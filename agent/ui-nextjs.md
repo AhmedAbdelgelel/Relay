@@ -48,6 +48,37 @@ Layout language: narrow sidebar (brand + primary actions + list + bottom setting
 lightweight topbar (breadcrumb + actions), content as stacked cards on canvas, settings
 as a centered modal with its own left nav.
 
+### Authoritative tokens (extracted from DeepSeek's shipped `--ds-*` variables)
+
+```css
+/* brand + text */
+--brand: #4d6bfe;                 --brand-deep: #3a65c2;
+--text-primary: #1e232c;         --text-secondary: rgba(0,0,0,.7);
+--text-description: rgba(0,0,0,.65); --text-placeholder: #8691a1;
+/* surfaces (light) — glass language */
+--canvas: #f9f8f8;
+--surface-1: hsla(0,0%,100%,.3);  --surface-2: hsla(0,0%,100%,.2);
+--surface-3: rgba(0,0,0,.03);     --surface-raised: hsla(0,0%,100%,.45);
+--overlay: #fff;
+/* borders */
+--border-subtle: rgba(0,0,0,.06); --border-default: rgba(0,0,0,.1);
+--border-divider: rgba(0,0,0,.08);--border-strong: rgba(0,0,0,.2);
+/* buttons */
+--btn-primary-bg: #1a1615;       --btn-primary-text: #fff;
+--btn-secondary-bg: hsla(0,0%,100%,.4); --btn-secondary-text: #1e232c;
+--btn-ghost-hover-bg: rgba(0,0,0,.04);
+/* radii */
+--radius-input: 10px; --radius-sm: 8px; --radius-media: 12px;
+--radius-panel: 16px; --radius-card: 24px; --radius-pill: 100px;
+/* fonts */
+--font-body: system-ui stack (the dsh app chrome uses -apple-system / Segoe UI;
+             NO webfont in the app — keep it that way for performance)
+```
+
+Dark theme (from the dsh dark hero): canvas `#0a0a0a`, surfaces
+`rgba(255,255,255,.04–.08)`, hairline `0 0 0 .5px rgba(255,255,255,.08) inset`,
+text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, black text).
+
 ## Commit plan (each commit pushed to `origin/main`)
 
 1. `docs(plan)` — this document.
