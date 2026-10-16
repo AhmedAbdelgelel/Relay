@@ -1,0 +1,15 @@
+# Build-context exclusions for the Dockerfile (T21).
+# NEVER exclude what the image needs: src/ (stage-1 tsc build), public/
+# (runtime playground UI), db/ (migration records), package.json,
+# package-lock.json, tsconfig.json.
+node_modules
+dist
+.git
+.github
+.env
+.env.*
+*.log
+tests
+agent
+evaluation
+scripts

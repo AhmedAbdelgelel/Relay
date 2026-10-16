@@ -1,0 +1,39 @@
+# T21 — CI gate: locked install + typecheck + the offline test sweep.
+# Runs on every push and pull request so `main` never goes red silently.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: npm ci + typecheck + test (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # node-version 24 matches the Dockerfile base and the local dev machine.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies (lockfile-exact)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Offline by construction: no GEMINI_API_KEY, OPEN_ROUTER_KEY,
+      # GEMINI_LIVE_TEST, REDIS_LIVE_TEST, CRED_ENC_KEY or DATABASE_URL is set
+      # here. The live suites self-skip (tests/integration/gemini-live.test.ts
+      # uses describe.skipIf(!LIVE || !HAS_KEY); redis-live needs
+      # REDIS_LIVE_TEST=1), so `vitest run` stays hermetic — zero live spend.
+      - name: Test (offline sweep)
+        run: npm test
