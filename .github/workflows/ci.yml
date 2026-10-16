@@ -1,4 +1,5 @@
-# T21 — CI gate: locked install + typecheck + the offline test sweep.
+# T21 — CI gate: locked install + typecheck + the offline test sweep, plus the
+# image leg (docker build + boot + /health; publishes to GHCR on main).
 # Runs on every push and pull request so `main` never goes red silently.
 name: CI
 
@@ -31,9 +32,73 @@ jobs:
         run: npm run typecheck
 
       # Offline by construction: no GEMINI_API_KEY, OPEN_ROUTER_KEY,
-      # GEMINI_LIVE_TEST, REDIS_LIVE_TEST, CRED_ENC_KEY or DATABASE_URL is set
-      # here. The live suites self-skip (tests/integration/gemini-live.test.ts
-      # uses describe.skipIf(!LIVE || !HAS_KEY); redis-live needs
-      # REDIS_LIVE_TEST=1), so `vitest run` stays hermetic — zero live spend.
+      # GEMINI_LIVE_TEST, OPENROUTER_LIVE_TEST, REDIS_LIVE_TEST, CRED_ENC_KEY
+      # or DATABASE_URL is set here. The live suites self-skip
+      # (openrouter-/gemini-live via describe.skipIf(!LIVE || !HAS_KEY) behind
+      # their *_LIVE_TEST flags; redis-live needs REDIS_LIVE_TEST=1), so
+      # `vitest run` stays hermetic — zero live spend.
       - name: Test (offline sweep)
         run: npm test
+
+  # T21 — image leg: build the Dockerfile, boot the container, verify /health
+  # and the container HEALTHCHECK, then publish to GHCR on main so the image
+  # is pullable ("downloadable") without a local build.
+  docker:
+    name: docker build + boot + /health (publish on main)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t relay:ci .
+
+      - name: Boot container and wait for /health
+        run: |
+          docker run -d --name relay-ci -e PORT=3000 -p 3000:3000 relay:ci
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != "1" ]; then
+            echo "container never became reachable"
+            docker logs relay-ci
+            exit 1
+          fi
+          echo "--- /health ---"
+          curl -fsS http://127.0.0.1:3000/health
+          echo
+
+      - name: Verify container HEALTHCHECK turns healthy
+        run: |
+          for i in $(seq 1 60); do
+            st=$(docker inspect --format='{{.State.Health.Status}}' relay-ci)
+            [ "$st" = "healthy" ] && break
+            sleep 1
+          done
+          st=$(docker inspect --format='{{.State.Health.Status}}' relay-ci)
+          echo "container health: $st"
+          [ "$st" = "healthy" ]
+          docker rm -f relay-ci
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push image to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          IMG="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker tag relay:ci "$IMG:latest"
+          docker tag relay:ci "$IMG:sha-${GITHUB_SHA::7}"
+          docker push "$IMG:latest"
+          docker push "$IMG:sha-${GITHUB_SHA::7}"
+          echo "published $IMG:latest and $IMG:sha-${GITHUB_SHA::7}"
