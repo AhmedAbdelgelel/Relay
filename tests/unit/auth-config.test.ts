@@ -61,6 +61,8 @@ describe("auth config (T1)", () => {
     expect(sql).toContain("key_hash TEXT NOT NULL UNIQUE");
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS provider_credentials");
     expect(sql).toContain("PRIMARY KEY (tenant_id, provider)");
+    // Matches the embedded DDL in src/auth/PgAuthStores.ts (no index drift).
+    expect(sql).toContain("CREATE INDEX IF NOT EXISTS api_keys_tenant_idx");
     expect(sql).not.toContain("scopes");
   });
 });

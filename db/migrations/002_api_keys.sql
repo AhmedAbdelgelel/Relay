@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS api_keys_tenant_idx ON api_keys (tenant_id);
+
 CREATE TABLE IF NOT EXISTS provider_credentials (
   tenant_id TEXT NOT NULL,
   provider TEXT NOT NULL,

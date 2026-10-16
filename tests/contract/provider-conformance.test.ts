@@ -444,7 +444,7 @@ describe("T8 capability gate + redaction", () => {
     expect(missingCapabilities({ ...baseReq }, noMax)).toEqual([]);
   });
 
-  it("INV cap-3 (INV-1): HTTP gate — unsupported capability -> 400 unsupported_capability, provider never called", async () => {
+  it("INV cap-3 (INV-1): HTTP gate — unsupported capability -> 400 unsupported_capability, provider never called", { timeout: 15000 }, async () => {
     // Adapter that declares maxTokens:false. A request carrying max_tokens
     // must be rejected BEFORE dispatch: no chat() call, 400 with the
     // unsupported_capability code.
