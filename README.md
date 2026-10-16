@@ -58,7 +58,7 @@ curl -s -X POST localhost:3000/v1/chat/completions \
 | `/providers` | GET | Configured providers (never key values). |
 | `/` | GET | Playground UI. |
 
-Key configuration (`src/infrastructure/config.ts` is the only file that reads env; typos fail fast at boot):
+Every variable, with its default, is listed in [`.env.example`](.env.example). The highlights (`src/infrastructure/config.ts` is the only file that reads env; typos fail fast at boot):
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -127,9 +127,13 @@ Measured performance (mock provider with 50 ms simulated latency):
 
 </details>
 
-## Coming next
+## Known limits
 
-Registered-vs-anonymous access lanes on the chat endpoint with per-tenant usage stats, automatic failover when a provider is down, and a measurement-backed similarity cutoff with cost-savings reporting.
+What is deliberately not built yet is tracked in the repo docs, not hidden here — see `agent/implementation.md` Part A (Non-Goals) and the open tasks in `agent/loop.md` §Tasks. The headline items:
+
+- **Access lanes are not wired yet** — gateway-key verification on chat, `POST /v1/register`, and `GET /v1/usage` are specified but pending (T24–T27). Today the chat endpoint does not authenticate callers (do not expose it to the public internet yet), and upstream credentials come from the environment only.
+- **Ops gaps** — no Prometheus/tracing export, no rate limits or quotas, single process only (in-memory single-flight; cache caps: 1000 exact entries, 2000 semantic entries). Docker image and CI workflow are pending (T21).
+- **Provider prompt-cache discounts** (`cached_tokens`) are not surfaced; `estimated_cost_saved` is only as accurate as the `SAVED_USD_PER_1K_TOKENS` price you set.
 
 ## Layout
 
