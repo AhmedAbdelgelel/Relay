@@ -36,6 +36,36 @@ export interface MetricsSnapshot {
   provider_calls_avoided: number;
 }
 
+/**
+ * Per-tenant slice for the REGISTERED lane (T26). Deliberately not part of
+ * MetricsSnapshot: GET /metrics is public, so tenant usage is only readable
+ * via tenantSnapshot(tenant) (T27's /v1/usage is the sanctioned reader).
+ * Derived fields: `misses` = requests - exact_hits - semantic_hits (i.e. not
+ * served by either cache); `provider_calls_avoided` = exact_hits +
+ * semantic_hits + coalesced.
+ */
+export interface TenantUsageSnapshot {
+  tenant: string;
+  requests: number;
+  exact_hits: number;
+  semantic_hits: number;
+  misses: number;
+  coalesced: number;
+  hit_rate: number;
+  provider_calls_avoided: number;
+  latency_ms_total: number;
+  avg_latency_ms: number;
+}
+
+interface TenantUsage {
+  requests: number;
+  exact_hits: number;
+  semantic_hits: number;
+  coalesced: number;
+  latency_ms_total: number;
+  latency_samples: number;
+}
+
 const ZERO: MetricsSnapshot = {
   requests_total: 0,
   exact_hits: 0,
@@ -121,6 +151,8 @@ export class GatewayMetrics {
   private providerLatencyTotal = 0;
   private semanticScoreTotal = 0;
   private semanticScored = 0;
+  /** tenant -> usage; registered lane only. Read via tenantSnapshot(). */
+  private readonly tenants = new Map<string, TenantUsage>();
 
   inc(name: CounterName, by = 1): void {
     this.c[name] += by;
@@ -156,6 +188,64 @@ export class GatewayMetrics {
     this.c.estimated_cost_saved += (tokens / 1000) * usdPer1kTokens;
   }
 
+  // --- T26 registered-lane per-tenant recording (anonymous lanes never call
+  // these). Same sites as the global counters; sync and never throw.
+
+  observeTenantRequest(tenant: string): void {
+    this.tenant(tenant).requests++;
+  }
+
+  observeTenantExactHit(tenant: string): void {
+    this.tenant(tenant).exact_hits++;
+  }
+
+  observeTenantSemanticHit(tenant: string): void {
+    this.tenant(tenant).semantic_hits++;
+  }
+
+  observeTenantCoalesced(tenant: string): void {
+    this.tenant(tenant).coalesced++;
+  }
+
+  /** Terminal-outcome latency (hit / semantic hit / served miss / stream done). */
+  observeTenantLatency(tenant: string, ms: number): void {
+    const t = this.tenant(tenant);
+    t.latency_ms_total += Math.max(0, ms);
+    t.latency_samples++;
+  }
+
+  /** One tenant's slice only — never the whole tenant map. Unknown tenant = zeros. */
+  tenantSnapshot(tenant: string): TenantUsageSnapshot {
+    const t = this.tenants.get(tenant);
+    const requests = t?.requests ?? 0;
+    const exactHits = t?.exact_hits ?? 0;
+    const semanticHits = t?.semantic_hits ?? 0;
+    const coalesced = t?.coalesced ?? 0;
+    const latencyTotal = t?.latency_ms_total ?? 0;
+    const samples = t?.latency_samples ?? 0;
+    return {
+      tenant,
+      requests,
+      exact_hits: exactHits,
+      semantic_hits: semanticHits,
+      misses: Math.max(0, requests - exactHits - semanticHits),
+      coalesced,
+      hit_rate: requests > 0 ? (exactHits + semanticHits) / requests : 0,
+      provider_calls_avoided: exactHits + semanticHits + coalesced,
+      latency_ms_total: latencyTotal,
+      avg_latency_ms: samples > 0 ? latencyTotal / samples : 0,
+    };
+  }
+
+  private tenant(tenant: string): TenantUsage {
+    let t = this.tenants.get(tenant);
+    if (!t) {
+      t = { requests: 0, exact_hits: 0, semantic_hits: 0, coalesced: 0, latency_ms_total: 0, latency_samples: 0 };
+      this.tenants.set(tenant, t);
+    }
+    return t;
+  }
+
   snapshot(): MetricsSnapshot {
     const hits = this.c.exact_hits;
     const misses = this.c.exact_misses;
@@ -182,6 +272,7 @@ export class GatewayMetrics {
     this.providerLatencyTotal = 0;
     this.semanticScoreTotal = 0;
     this.semanticScored = 0;
+    this.tenants.clear();
   }
 }
 

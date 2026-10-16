@@ -4,6 +4,7 @@ import Fastify from "fastify";
 import { registerChatRoutes } from "../../src/api/routes/chat.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { OpenAICompatibleProvider } from "../../src/providers/OpenAICompatibleProvider.js";
+import { laneAuth } from "../helpers/lane.js";
 
 // Live-Gemini prompt tests. Opt-in only, matching tests/integration/redis-live.test.ts,
 // because they call the real Gemini endpoint: they must never run in the default
@@ -122,10 +123,14 @@ describe.skipIf(!LIVE || !HAS_KEY)("gemini live prompt (real upstream)", () => {
     async () => {
       const cfg = liveCfg();
       const app = Fastify();
-      registerChatRoutes(app, liveProvider(), cfg);
+      // T26: registered lane; the live upstream key still comes from env
+      // (no stored credential), so the gateway's env key serves the request.
+      const lane = await laneAuth("gemini");
+      registerChatRoutes(app, liveProvider(), cfg, undefined, { auth: lane.auth });
       const res = await app.inject({
         method: "POST",
         url: "/v1/chat/completions",
+        headers: lane.headersFor("gemini"),
         payload: {
           model: MODEL,
           messages: [{ role: "user", content: "Reply with exactly: GATEWAY_OK" }],

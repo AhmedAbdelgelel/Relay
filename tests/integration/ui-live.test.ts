@@ -66,6 +66,9 @@ beforeAll(async () => {
   process.env.GEMINI_API_KEY = "";
   process.env.OPENAI_API_KEY = "";
   process.env.ANTHROPIC_API_KEY = "";
+  // T26: chat is lane-gated now — seed a gateway key bound to "mock" (the
+  // routed provider for gemini-* models here) for the UI to send.
+  process.env.GATEWAY_API_KEYS = "t:mock:ui-live:lg_ui_live_test_key";
   const built = buildServer();
   app = built.app;
   address = await app.listen({ port: 0, host: "127.0.0.1" });
@@ -83,6 +86,13 @@ beforeAll(async () => {
   });
   vi.stubGlobal("navigator", dom.window.navigator);
   vi.stubGlobal("localStorage", dom.window.localStorage);
+  // T26: point the playground's stored connection config at the seeded gateway
+  // key so every request carries `Authorization: Bearer lg_...` (registered
+  // lane) — exactly what a user pasting the key into "Connect via API" gets.
+  dom.window.localStorage.setItem(
+    "llm-gateway-api-v1",
+    JSON.stringify({ baseUrl: "", apiKey: "lg_ui_live_test_key" }),
+  );
   // The UI issues relative URLs ("/v1/chat/completions") — a browser resolves
   // them against its origin, so do the same against the live socket. Everything
   // else (headers, SSE, abort signals) is the real thing.

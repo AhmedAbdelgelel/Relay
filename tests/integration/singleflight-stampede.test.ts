@@ -8,6 +8,11 @@ import type { ChatResponse } from "../../src/domain/types.js";
 import { metrics } from "../../src/observability/metrics.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
 import type { ProviderAdapter } from "../../src/providers/ProviderAdapter.js";
+import { laneAuth } from "../helpers/lane.js";
+
+// T26: registered lane, key bound to "mock" (every app here serves MockProvider).
+const lane = await laneAuth("mock");
+const laneHeaders = lane.headersFor("mock");
 
 function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
@@ -42,11 +47,11 @@ describe("single-flight stampede", () => {
       calls++;
       return orig(...a);
     }) as typeof orig;
-    registerChatRoutes(app, provider, cfg(), cache);
+    registerChatRoutes(app, provider, cfg(), cache, { auth: lane.auth });
 
     const results = await Promise.all(
       Array.from({ length: 50 }, () =>
-        app.inject({ method: "POST", url: "/v1/chat/completions", payload: body }),
+        app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body }),
       ),
     );
     for (const r of results) {
@@ -71,11 +76,11 @@ describe("single-flight stampede", () => {
       calls++;
       return orig(...a);
     }) as typeof orig;
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lane.auth });
     const [a, b] = await Promise.all([
-      app.inject({ method: "POST", url: "/v1/chat/completions", payload: body }),
+      app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body }),
       app.inject({
-        method: "POST", url: "/v1/chat/completions",
+        method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
         payload: { model: "m", messages: [{ role: "user", content: "different" }] },
       }),
     ]);
@@ -102,16 +107,16 @@ describe("single-flight stampede", () => {
         yield { delta: "x" };
       },
     };
-    registerChatRoutes(app, flaky, cfg(), new InMemoryCache());
+    registerChatRoutes(app, flaky, cfg(), new InMemoryCache(), { auth: lane.auth });
     const failed = await Promise.all(
       Array.from({ length: 5 }, () =>
-        app.inject({ method: "POST", url: "/v1/chat/completions", payload: body }),
+        app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body }),
       ),
     );
     for (const r of failed) expect(r.statusCode).toBe(502);
     expect(calls).toBe(3); // one shared leader execution x (1 + 2 bounded retries); followers still coalesced
     shouldFail = false;
-    const retry = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    const retry = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(retry.statusCode).toBe(200);
     expect(calls).toBe(4); // recovery adds exactly one more execution, never poisons
     await app.close();
@@ -121,9 +126,9 @@ describe("single-flight stampede", () => {
 describe("cache metrics endpoint", () => {
   it("HIT/MISS update /metrics with hit_rate + avoided", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache());
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body }); // MISS
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body }); // HIT
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body }); // MISS
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body }); // HIT
     const res = await app.inject({ method: "GET", url: "/metrics" });
     expect(res.statusCode).toBe(200);
     const s = res.json();

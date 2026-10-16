@@ -4,6 +4,11 @@ import { registerChatRoutes } from "../../src/api/routes/chat.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
 import { createProviderFromEnv } from "../../src/providers/factory.js";
+import { laneAuth } from "../helpers/lane.js";
+
+// T26: registered lane, key bound to "mock" (every app here injects a MockProvider).
+const lane = await laneAuth("mock");
+const laneHeaders = lane.headersFor("mock");
 
 function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
@@ -26,9 +31,10 @@ function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
 describe("provider failure normalization", () => {
   it("slow provider -> 504 gateway_timeout (no hang)", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider({ delayMs: 5000 }), cfg({ upstreamTimeoutMs: 100 }));
+    registerChatRoutes(app, new MockProvider({ delayMs: 5000 }), cfg({ upstreamTimeoutMs: 100 }), undefined, { auth: lane.auth });
     const res = await app.inject({
       method: "POST", url: "/v1/chat/completions",
+      headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "hi" }] },
     });
     expect(res.statusCode).toBe(504);
@@ -38,9 +44,10 @@ describe("provider failure normalization", () => {
   it("rate_limited mock -> 429, server_error mock -> 502", async () => {
     for (const [failure, status] of [["rate_limited", 429], ["server_error", 502]] as const) {
       const app = Fastify();
-      registerChatRoutes(app, new MockProvider({ failure }), cfg({ upstreamTimeoutMs: 2000 }));
+      registerChatRoutes(app, new MockProvider({ failure }), cfg({ upstreamTimeoutMs: 2000 }), undefined, { auth: lane.auth });
       const res = await app.inject({
         method: "POST", url: "/v1/chat/completions",
+        headers: laneHeaders,
         payload: { model: "m", messages: [{ role: "user", content: "hi" }] },
       });
       expect(res.statusCode).toBe(status);
@@ -49,10 +56,11 @@ describe("provider failure normalization", () => {
 
   it("tight timeout bounds retries: error promptly, never hangs", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider({ failure: "rate_limited" }), cfg({ upstreamTimeoutMs: 100 }));
+    registerChatRoutes(app, new MockProvider({ failure: "rate_limited" }), cfg({ upstreamTimeoutMs: 100 }), undefined, { auth: lane.auth });
     const t0 = Date.now();
     const res = await app.inject({
       method: "POST", url: "/v1/chat/completions",
+      headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "hi" }] },
     });
     const elapsed = Date.now() - t0;

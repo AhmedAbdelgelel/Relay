@@ -7,6 +7,11 @@ import { InMemoryCache } from "../../src/cache/InMemoryCache.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import type { ChatRequest, ChatResponse } from "../../src/domain/types.js";
 import type { ProviderAdapter, StreamChunk } from "../../src/providers/ProviderAdapter.js";
+import { laneAuth } from "../helpers/lane.js";
+
+// T26: registered lane (key bound to "mock", the name every provider here uses).
+const lane = await laneAuth("mock");
+const laneHeaders = lane.headersFor("mock");
 
 function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
@@ -47,13 +52,13 @@ const post = (id: string) => ({
   method: "POST" as const,
   url: "/v1/chat/completions",
   payload: chatBody,
-  headers: { "x-request-id": id },
+  headers: { "x-request-id": id, ...laneHeaders },
 });
 const postStream = (id: string) => ({
   method: "POST" as const,
   url: "/v1/chat/completions",
   payload: { ...chatBody, stream: true },
-  headers: { "x-request-id": id },
+  headers: { "x-request-id": id, ...laneHeaders },
 });
 
 /** Read every SSE content delta out of a raw stream body. */
@@ -75,7 +80,7 @@ function sseText(raw: string): string {
 describe("response normalizer through the gateway (non-stream)", () => {
   it("strips markdown before the client sees it", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MarkdownProvider("## Title\n\n**bold** and *italic*"), cfg(), new InMemoryCache());
+    registerChatRoutes(app, new MarkdownProvider("## Title\n\n**bold** and *italic*"), cfg(), new InMemoryCache(), { auth: lane.auth });
     const res = await app.inject(post("norm-1"));
     expect(res.statusCode).toBe(200);
     const content = res.json().choices[0].message.content;
@@ -91,7 +96,7 @@ describe("response normalizer through the gateway (non-stream)", () => {
   it("stores the NORMALIZED text in the exact cache", async () => {
     const cache = new InMemoryCache();
     const app = Fastify();
-    registerChatRoutes(app, new MarkdownProvider("**only bold**"), cfg(), cache);
+    registerChatRoutes(app, new MarkdownProvider("**only bold**"), cfg(), cache, { auth: lane.auth });
     const first = await app.inject(post("norm-2"));
     expect(first.json().choices[0].message.content).toBe("only bold");
 
@@ -106,7 +111,7 @@ describe("response normalizer through the gateway (non-stream)", () => {
 
   it("leaves code block contents untouched", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MarkdownProvider("```js\nconst a = **1**;\n```"), cfg(), new InMemoryCache());
+    registerChatRoutes(app, new MarkdownProvider("```js\nconst a = **1**;\n```"), cfg(), new InMemoryCache(), { auth: lane.auth });
     const res = await app.inject(post("norm-3"));
     const content = res.json().choices[0].message.content;
     expect(content).toContain("**1**");
@@ -120,7 +125,7 @@ describe("response normalizer through the gateway (SSE)", () => {
     const app = Fastify();
     // Deliberately split mid-marker: naive per-chunk stripping emits "bold**".
     const pieces = ["## Head", "ing\n\n**bo", "ld** and ", "text"];
-    registerChatRoutes(app, new MarkdownProvider("", pieces), cfg(), new InMemoryCache());
+    registerChatRoutes(app, new MarkdownProvider("", pieces), cfg(), new InMemoryCache(), { auth: lane.auth });
     const res = await app.inject(postStream("norm-4"));
     expect(res.statusCode).toBe(200);
     const text = sseText(res.body);
@@ -134,7 +139,7 @@ describe("response normalizer through the gateway (SSE)", () => {
 
   it("still reports BYPASS, TTFT and the terminal usage frame", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MarkdownProvider("**x**", ["**", "x", "**"]), cfg(), new InMemoryCache());
+    registerChatRoutes(app, new MarkdownProvider("**x**", ["**", "x", "**"]), cfg(), new InMemoryCache(), { auth: lane.auth });
     const res = await app.inject(postStream("norm-5"));
     expect(res.headers["x-cache"]).toBe("BYPASS");
     expect(res.headers["x-latency-ms"]).toBeTruthy();
@@ -145,7 +150,7 @@ describe("response normalizer through the gateway (SSE)", () => {
 
   it("an empty stream still closes cleanly with [DONE]", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MarkdownProvider("", []), cfg(), new InMemoryCache());
+    registerChatRoutes(app, new MarkdownProvider("", []), cfg(), new InMemoryCache(), { auth: lane.auth });
     const res = await app.inject(postStream("norm-5"));
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("data: [DONE]");

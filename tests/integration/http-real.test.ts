@@ -8,6 +8,8 @@ import { buildServer } from "../../src/server.js";
 // ephemeral port and POST via fetch.
 describe("real socket (no premature abort)", () => {
   process.env.PROVIDER = "mock"; // force mock regardless of local .env (which may be gemini)
+  // T26: seed a gateway key bound to "mock" (the single injected provider here).
+  process.env.GATEWAY_API_KEYS = "t:mock:http-real:lg_http_real_test_key";
   let app: FastifyInstance;
   let address: string;
 
@@ -20,7 +22,7 @@ describe("real socket (no premature abort)", () => {
   it("POST over real HTTP returns 200 (not 504)", async () => {
     const res = await fetch(`${address}/v1/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer lg_http_real_test_key" },
       body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(200);

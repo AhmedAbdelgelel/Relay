@@ -13,6 +13,7 @@ import { metrics } from "../src/observability/metrics.js";
 import { isReusableSemantic, systemFingerprint, POLICY_VERSION } from "../src/policy/reuse.js";
 import { registerChatRoutes } from "../src/api/routes/chat.js";
 import { MockProvider } from "../src/providers/MockProvider.js";
+import { laneAuth } from "./helpers/lane.js";
 
 const DATASET_VERSION = "threshold-sweep/v1";
 
@@ -201,21 +202,24 @@ describe("exact-cache latency numbers (HIT vs MISS, mock delayMs=50)", () => {
   it("HIT p95 stays far below MISS median; avoided calls accounted", async () => {
     const app: FastifyInstance = Fastify();
     const provider = new MockProvider({ delayMs: 50 });
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    // T26: registered lane so the exact-cache pipeline runs (string "mock").
+    const lane = await laneAuth("mock");
+    const laneHeaders = lane.headersFor("mock");
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lane.auth });
     const prompt = "eval numbers latency probe";
     const body = { model: "m", messages: [{ role: "user", content: prompt }] };
     const missLat: number[] = [];
     for (let i = 0; i < 5; i++) {
       const t0 = Date.now();
-      const r = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { ...body, messages: [{ role: "user", content: `${prompt} ${i}` }] } });
+      const r = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { ...body, messages: [{ role: "user", content: `${prompt} ${i}` }] } });
       expect(r.statusCode).toBe(200);
       missLat.push(Date.now() - t0);
     }
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     const hitLat: number[] = [];
     for (let i = 0; i < 20; i++) {
       const t0 = Date.now();
-      const r = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+      const r = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
       expect(r.headers["x-cache"]).toBe("HIT");
       hitLat.push(Date.now() - t0);
     }

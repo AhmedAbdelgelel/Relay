@@ -37,4 +37,49 @@ describe("GatewayMetrics", () => {
     expect(s.cache_lookups).toBe(0);
     expect(s.hit_rate).toBe(0);
   });
+
+  it("tenant snapshots are derived, isolated, and absent from the public snapshot", () => {
+    const m = new GatewayMetrics();
+    m.observeTenantRequest("t-a");
+    m.observeTenantRequest("t-a");
+    m.observeTenantRequest("t-a");
+    m.observeTenantRequest("t-a");
+    m.observeTenantExactHit("t-a");
+    m.observeTenantExactHit("t-a");
+    m.observeTenantSemanticHit("t-a");
+    m.observeTenantCoalesced("t-a");
+    m.observeTenantLatency("t-a", 10);
+    m.observeTenantLatency("t-a", 30);
+    expect(m.tenantSnapshot("t-a")).toEqual({
+      tenant: "t-a",
+      requests: 4,
+      exact_hits: 2,
+      semantic_hits: 1,
+      misses: 1, // 4 requests - 2 exact - 1 semantic
+      coalesced: 1,
+      hit_rate: 0.75, // (2 + 1) / 4
+      provider_calls_avoided: 4, // 2 exact + 1 semantic + 1 coalesced
+      latency_ms_total: 40,
+      avg_latency_ms: 20,
+    });
+    // Untouched tenants read as documented zeros; reads never create rows.
+    expect(m.tenantSnapshot("t-b").requests).toBe(0);
+    expect(m.tenantSnapshot("t-b").hit_rate).toBe(0);
+    expect(m.tenantSnapshot("t-b").misses).toBe(0);
+    expect(m.tenantSnapshot("t-a").requests).toBe(4);
+    // The public snapshot (GET /metrics) must never leak the tenant map.
+    expect(JSON.stringify(m.snapshot())).not.toContain("t-a");
+  });
+
+  it("reset clears tenant usage too", () => {
+    const m = new GatewayMetrics();
+    m.observeTenantRequest("t-a");
+    m.observeTenantExactHit("t-a");
+    m.observeTenantLatency("t-a", 5);
+    m.reset();
+    const a = m.tenantSnapshot("t-a");
+    expect(a.requests).toBe(0);
+    expect(a.exact_hits).toBe(0);
+    expect(a.latency_ms_total).toBe(0);
+  });
 });

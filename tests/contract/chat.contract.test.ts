@@ -5,8 +5,9 @@ import { buildExactCacheKey } from "../../src/domain/normalize.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
 import type { ProviderAdapter, StreamChunk } from "../../src/providers/ProviderAdapter.js";
+import { laneAuth } from "../helpers/lane.js";
 
-function testApp(provider: ProviderAdapter = new MockProvider()) {
+async function testApp(provider: ProviderAdapter = new MockProvider()) {
   const app = Fastify();
   const cfg: GatewayConfig = {
     port: 3000, provider: "mock", upstreamTimeoutMs: 2000,
@@ -22,15 +23,19 @@ function testApp(provider: ProviderAdapter = new MockProvider()) {
     semanticEnabled: false, semanticThreshold: 0.92, semanticTopK: 3,
     semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "", gatewayApiKeys: [], credEncKey: "", savedUsdPer1kTokens: 0,
   };
-  registerChatRoutes(app, provider, cfg);
-  return app;
+  // T26: every chat request needs a lane; bind the key to the provider this
+  // app routes to (no providers map -> the injected adapter is the target).
+  const lane = await laneAuth(provider.name);
+  registerChatRoutes(app, provider, cfg, undefined, { auth: lane.auth });
+  return { app, headers: lane.headersFor(provider.name) };
 }
 
 describe("POST /v1/chat/completions contract", () => {
   it("happy path returns OpenAI shape + x-request-id", async () => {
-    const app = testApp();
+    const { app, headers } = await testApp();
     const res = await app.inject({
       method: "POST", url: "/v1/chat/completions",
+      headers,
       payload: { model: "gemini-2.0-flash", messages: [{ role: "user", content: "hi" }] },
     });
     expect(res.statusCode).toBe(200);
@@ -44,17 +49,20 @@ describe("POST /v1/chat/completions contract", () => {
     const spy = new MockProvider();
     const orig = spy.chat.bind(spy);
     spy.chat = (async (...a: Parameters<typeof orig>) => { called = true; return orig(...a); }) as typeof orig;
-    const app = testApp(spy);
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "", messages: [] } });
+    const { app, headers } = await testApp(spy);
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers, payload: { model: "", messages: [] } });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("invalid_request");
+    // T26/R8: validation failed -> no lane evidence, same as no cache hash.
+    expect(res.headers["x-lane"]).toBeUndefined();
     expect(called).toBe(false);
   });
 
   it("stream:true returns SSE with [DONE]", async () => {
-    const app = testApp();
+    const { app, headers } = await testApp();
     const res = await app.inject({
       method: "POST", url: "/v1/chat/completions",
+      headers,
       payload: { model: "gemini-2.0-flash", messages: [{ role: "user", content: "hi" }], stream: true },
     });
     expect(res.statusCode).toBe(200);
@@ -84,9 +92,9 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
     }).hash;
 
   it("x-cache-hash equals the canonical sha256 on a non-stream 200", async () => {
-    const app = testApp();
+    const { app, headers } = await testApp();
     const payload: ReqBody = { model: "gemini-2.0-flash", messages: [{ role: "user", content: "hash me" }], temperature: 0.3 };
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers, payload });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-cache-hash"]).toBe(hashOf(payload));
     expect(String(res.headers["x-cache-hash"])).toMatch(/^[0-9a-f]{64}$/);
@@ -94,9 +102,9 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
   });
 
   it("stream:true reports BYPASS + the would-be hash + x-latency-ms (TTFT)", async () => {
-    const app = testApp();
+    const { app, headers } = await testApp();
     const payload: ReqBody = { model: "gemini-2.0-flash", messages: [{ role: "user", content: "stream hash" }], stream: true };
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers, payload });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-cache"]).toBe("BYPASS");
     expect(res.headers["x-cache-hash"]).toBe(hashOf(payload));
@@ -105,17 +113,18 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
   });
 
   it("400 invalid_request never gets a hash (validation runs first)", async () => {
-    const app = testApp();
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "", messages: [] } });
+    const { app, headers } = await testApp();
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers, payload: { model: "", messages: [] } });
     expect(res.statusCode).toBe(400);
     expect(res.headers["x-cache-hash"]).toBeUndefined();
     await app.close();
   });
 
   it("stream body carries a usage frame before [DONE] (D1)", async () => {
-    const app = testApp();
+    const { app, headers } = await testApp();
     const res = await app.inject({
       method: "POST", url: "/v1/chat/completions",
+      headers,
       payload: { model: "gemini-2.0-flash", messages: [{ role: "user", content: "usage please" }], stream: true },
     });
     expect(res.statusCode).toBe(200);
@@ -135,9 +144,10 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
   });
 
   it("provider failing BEFORE the first token returns real JSON status, not an empty 200 (D2)", async () => {
-    const app = testApp(new MockProvider({ failure: "rate_limited" }));
+    const { app, headers } = await testApp(new MockProvider({ failure: "rate_limited" }));
     const res = await app.inject({
       method: "POST", url: "/v1/chat/completions",
+      headers,
       payload: { model: "gemini-2.0-flash", messages: [{ role: "user", content: "hi" }], stream: true },
     });
     expect(res.statusCode).toBe(429);
@@ -164,9 +174,11 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
       semanticTtlSec: 3600, semanticStore: "memory", databaseUrl: "", gatewayApiKeys: [], credEncKey: "", savedUsdPer1kTokens: 0,
     };
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider({ delayMs: 5000 }), shortCfg);
+    const lane = await laneAuth("mock");
+    registerChatRoutes(app, new MockProvider({ delayMs: 5000 }), shortCfg, undefined, { auth: lane.auth });
     const res = await app.inject({
       method: "POST", url: "/v1/chat/completions",
+      headers: lane.headersFor("mock"),
       payload: { model: "m", messages: [{ role: "user", content: "hi" }], stream: true },
     });
     expect(res.statusCode).toBe(504);
@@ -185,9 +197,10 @@ describe("metrics contract (cache hash, stream usage, TTFT, pre-stream errors)",
         /* no chunks at all */
       },
     };
-    const app = testApp(empty);
+    const { app, headers } = await testApp(empty);
     const res = await app.inject({
       method: "POST", url: "/v1/chat/completions",
+      headers,
       payload: { model: "m", messages: [{ role: "user", content: "hi" }], stream: true },
     });
     expect(res.statusCode).toBe(200);

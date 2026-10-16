@@ -11,6 +11,14 @@ import { createProvidersFromEnv, providerForModel } from "../../src/providers/fa
 import { buildExactCacheKey } from "../../src/domain/normalize.js";
 import { metrics } from "../../src/observability/metrics.js";
 import { GatewayError, type ChatRequest, type ChatResponse } from "../../src/domain/types.js";
+import { laneAuth } from "../helpers/lane.js";
+
+// T26: each app here routes to a different provider (some tests hit two), and a
+// registered key only serves the provider it was issued for — so issue one lane
+// per name and pick per test. fallbackApp() switches `laneHeaders` to its
+// primary's lane; tests with several lanes pass headers explicitly.
+const lanes = await laneAuth("openai", "anthropic", "mock", "openrouter", "alpha", "beta", "gamma");
+let laneHeaders = lanes.headersFor("mock");
 
 function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
@@ -188,15 +196,17 @@ describe("chat via routed provider", () => {
       ["mock", stub("mock", counters.mock)],
     ]);
     const fallback = providers.get("mock")!;
-    registerChatRoutes(app, fallback, cfg(), cache, { providers });
+    registerChatRoutes(app, fallback, cfg(), cache, { auth: lanes.auth, providers });
 
     const messages = [{ role: "user" as const, content: "same prompt" }];
-    const gpt = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "gpt-4o-mini", messages } });
+    const openaiHeaders = lanes.headersFor("openai");
+    const anthropicHeaders = lanes.headersFor("anthropic");
+    const gpt = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: openaiHeaders, payload: { model: "gpt-4o-mini", messages } });
     expect(gpt.statusCode).toBe(200);
     expect(gpt.headers["x-provider"]).toBe("openai");
     expect(gpt.headers["x-cache"]).toBe("MISS");
 
-    const claude = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "claude-4", messages } });
+    const claude = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: anthropicHeaders, payload: { model: "claude-4", messages } });
     expect(claude.statusCode).toBe(200);
     expect(claude.headers["x-provider"]).toBe("anthropic");
     // Same prompt but different provider -> different exact key -> second provider call, not a HIT.
@@ -204,7 +214,7 @@ describe("chat via routed provider", () => {
     expect(counters.openai.calls).toBe(1);
     expect(counters.anthropic.calls).toBe(1);
 
-    const gptAgain = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "gpt-4o-mini", messages } });
+    const gptAgain = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: openaiHeaders, payload: { model: "gpt-4o-mini", messages } });
     expect(gptAgain.headers["x-cache"]).toBe("HIT");
     expect(gptAgain.headers["x-provider"]).toBe("openai");
     expect(counters.openai.calls).toBe(1);
@@ -214,8 +224,8 @@ describe("chat via routed provider", () => {
 
   it("backward compat: no providers map uses the single injected provider", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider(), cfg());
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "gpt-4o-mini", messages: [{ role: "user", content: "hi" }] } });
+    registerChatRoutes(app, new MockProvider(), cfg(), undefined, { auth: lanes.auth });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: lanes.headersFor("mock"), payload: { model: "gpt-4o-mini", messages: [{ role: "user", content: "hi" }] } });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-provider"]).toBe("mock");
     await app.close();
@@ -229,10 +239,11 @@ describe("chat via routed provider", () => {
       ["openrouter", stub("openrouter", counters.openrouter)],
       ["mock", stub("mock", counters.mock)],
     ]);
-    registerChatRoutes(app, providers.get("mock")!, cfg(), cache, { providers });
+    registerChatRoutes(app, providers.get("mock")!, cfg(), cache, { auth: lanes.auth, providers });
     const res = await app.inject({
       method: "POST",
       url: "/v1/chat/completions",
+      headers: lanes.headersFor("openrouter"),
       payload: { model: "qwen/qwen3.8-27b:free", messages: [{ role: "user", content: "hi" }] },
     });
     expect(res.statusCode).toBe(200);
@@ -282,8 +293,8 @@ describe("anthropic auth mapping", () => {
     // (With a healthy fallback in-map, T14 fails over instead — see T14 tests.)
     const anthropic = new AnthropicAdapter({ baseURL: "https://api.anthropic.com", apiKey: "bad", defaultModel: "claude-4" });
     const providers = new Map<string, ProviderAdapter>([["anthropic", anthropic]]);
-    registerChatRoutes(app, anthropic, cfg(), new InMemoryCache(), { providers });
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "claude-4", messages: [{ role: "user", content: "hi" }] } });
+    registerChatRoutes(app, anthropic, cfg(), new InMemoryCache(), { auth: lanes.auth, providers });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: lanes.headersFor("anthropic"), payload: { model: "claude-4", messages: [{ role: "user", content: "hi" }] } });
     expect(res.statusCode).toBe(502);
     expect(res.json().error.code).toBe("provider_auth_error");
     await app.close();
@@ -314,7 +325,10 @@ describe("T14 fallback", () => {
     ]);
     const app = Fastify();
     const cache = new InMemoryCache();
-    registerChatRoutes(app, primary, cfg(), cache, { providers });
+    registerChatRoutes(app, primary, cfg(), cache, { auth: lanes.auth, providers });
+    // A key only serves its own provider: every inject in these tests uses the
+    // primary's lane ("alpha" for the counted mocks).
+    laneHeaders = lanes.headersFor(primary.name);
     return { app, providers, cache };
   }
 
@@ -326,7 +340,7 @@ describe("T14 fallback", () => {
     const fallback = mockCounted("beta", null, fallbackCalls);
     const { app } = fallbackApp(primary, fallback);
     const res = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "t14 primary 500" }] },
     });
     expect(res.statusCode).toBe(200);
@@ -349,7 +363,7 @@ describe("T14 fallback", () => {
     const fallback = mockCounted("beta", "server_error", fallbackCalls);
     const { app } = fallbackApp(primary, fallback);
     const res = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "t14 all down" }] },
     });
     expect(res.statusCode).toBe(502);
@@ -379,7 +393,7 @@ describe("T14 fallback", () => {
     const { app } = fallbackApp(primary, fallback);
     for (let i = 0; i < 3; i++) {
       const r = await app.inject({
-        method: "POST", url: "/v1/chat/completions",
+        method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
         payload: { model: "m", messages: [{ role: "user", content: `t14 breaker ${i}` }] },
       });
       expect(r.statusCode).toBe(200);
@@ -390,7 +404,7 @@ describe("T14 fallback", () => {
     const snapOpen = (await app.inject({ method: "GET", url: "/metrics" })).json() as { breaker_open: number };
     expect(snapOpen.breaker_open).toBe(1);
     const probe = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "t14 breaker probe" }] },
     });
     expect(probe.statusCode).toBe(200);
@@ -411,7 +425,7 @@ describe("T14 fallback", () => {
     const fallback = mockCounted("beta", null, fallbackCalls);
     const { app } = fallbackApp(primary, fallback);
     const res = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "t14 stream failover" }], stream: true },
     });
     expect(res.statusCode).toBe(200);
@@ -448,9 +462,10 @@ describe("T14 fallback", () => {
     const fallback = stub("beta", fallbackCalls);
     const providers = new Map<string, ProviderAdapter>([["primary", oneChunkFail], ["fallback", fallback]]);
     const app = Fastify();
-    registerChatRoutes(app, oneChunkFail, cfg(), new InMemoryCache(), { providers });
+    registerChatRoutes(app, oneChunkFail, cfg(), new InMemoryCache(), { auth: lanes.auth, providers });
+    laneHeaders = lanes.headersFor("alpha");
     const res = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "t14 mid stream" }], stream: true },
     });
     expect(res.statusCode).toBe(200);
@@ -473,7 +488,7 @@ describe("T14 fallback", () => {
     const messages = [{ role: "user" as const, content: "t14 serving key probe" }];
     const payload = { model: "m", messages };
     const canonical = { model: "m", messages, temperature: 1.0, stream: false };
-    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", payload });
+    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload });
     expect(first.statusCode).toBe(200);
     expect(first.headers["x-cache"]).toBe("MISS");
     expect(first.headers["x-provider"]).toBe("beta");
@@ -486,14 +501,14 @@ describe("T14 fallback", () => {
     expect(await cache.get(primaryKey)).toBeNull();
     expect(await cache.get(servingKey)).not.toBeNull();
     for (const p of ["t14 serving key trip 1", "t14 serving key trip 2"]) {
-      const r = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: p }] } });
+      const r = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: p }] } });
       expect(r.statusCode).toBe(200);
       expect(r.headers["x-fallback"]).toBe("true");
     }
     expect(primaryCalls.calls).toBe(9);
     expect(fallbackCalls.calls).toBe(3);
     expect(((await app.inject({ method: "GET", url: "/metrics" })).json() as { breaker_open: number }).breaker_open).toBe(1);
-    const replay = await app.inject({ method: "POST", url: "/v1/chat/completions", payload });
+    const replay = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload });
     expect(replay.statusCode).toBe(200);
     expect(replay.headers["x-cache"]).toBe("HIT");
     expect(replay.headers["x-provider"]).toBe("beta");
@@ -522,9 +537,10 @@ describe("T14 fallback", () => {
     const fallback = mockCounted("beta", null, fallbackCalls);
     const providers = new Map<string, ProviderAdapter>([["primary", fatal], ["fallback", fallback]]);
     const app = Fastify();
-    registerChatRoutes(app, fatal, cfg(), new InMemoryCache(), { providers });
+    registerChatRoutes(app, fatal, cfg(), new InMemoryCache(), { auth: lanes.auth, providers });
+    laneHeaders = lanes.headersFor("gamma");
     const res = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "t14 fatal failover" }] },
     });
     expect(res.statusCode).toBe(200);
@@ -534,7 +550,7 @@ describe("T14 fallback", () => {
     expect(fallbackCalls.calls).toBe(1);
     expect(res.json().model).toBe("m");
     const streamRes = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "t14 fatal stream" }], stream: true },
     });
     expect(streamRes.statusCode).toBe(200);

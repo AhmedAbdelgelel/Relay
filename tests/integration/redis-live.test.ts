@@ -7,8 +7,13 @@ import { RedisCache } from "../../src/cache/RedisCache.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { metrics } from "../../src/observability/metrics.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
+import { laneAuth } from "../helpers/lane.js";
 
 const LIVE = process.env.REDIS_LIVE_TEST === "1";
+
+// T26: registered lane, key bound to "mock" (every app here serves MockProvider).
+const lane = await laneAuth("mock");
+const laneHeaders = lane.headersFor("mock");
 
 function cfg(): GatewayConfig {
   return {
@@ -45,13 +50,13 @@ describe.skipIf(!LIVE)("exact cache over live Redis (opt-in: REDIS_LIVE_TEST=1)"
     const provider = new MockProvider();
     const orig = provider.chat.bind(provider);
     provider.chat = (async (...a: Parameters<typeof orig>) => { calls++; return orig(...a); }) as typeof orig;
-    registerChatRoutes(app, provider, cfg(), cache);
+    registerChatRoutes(app, provider, cfg(), cache, { auth: lane.auth });
     const prompt = `eval redis-live roundtrip ${Date.now()}`;
     const body = { model: "m", messages: [{ role: "user", content: prompt }] };
-    const seed = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    const seed = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(seed.statusCode).toBe(200);
     expect(seed.headers["x-cache"]).toBe("MISS");
-    const hit = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    const hit = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(hit.statusCode).toBe(200);
     expect(hit.headers["x-cache"]).toBe("HIT");
     expect(hit.json().choices[0].message.content).toBe(seed.json().choices[0].message.content);
@@ -61,9 +66,9 @@ describe.skipIf(!LIVE)("exact cache over live Redis (opt-in: REDIS_LIVE_TEST=1)"
 
   it("different prompt is a MISS (no cross-key bleed in Redis)", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider(), cfg(), cache);
+    registerChatRoutes(app, new MockProvider(), cfg(), cache, { auth: lane.auth });
     const miss = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: `eval redis-live other ${Date.now()}` }] },
     });
     expect(miss.headers["x-cache"]).toBe("MISS");

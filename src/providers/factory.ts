@@ -106,6 +106,33 @@ export function createProvidersFromEnv(cfg: GatewayConfig): Map<string, Provider
   return map;
 }
 
+// T26: per-request adapter carrying a lane-scoped upstream key (a registered
+// tenant's stored credential, or an anonymous caller's x-provider-key). Mirrors
+// createProvidersFromEnv's constructors with apiKey overridden; mock/ollama
+// ignore keys (nothing is sent upstream), and `.name` stays identical to the
+// env-configured adapter so cache keys, fallback chains and x-provider
+// evidence are unchanged. A stored credential never falls back to the env key.
+export function providerWithKey(name: string, apiKey: string, cfg: GatewayConfig): ProviderAdapter {
+  switch (name) {
+    case "mock":
+      return new MockProvider();
+    case "gemini":
+      return new OpenAICompatibleProvider({ name, baseURL: cfg.geminiBaseUrl, apiKey, defaultModel: cfg.geminiModel });
+    case "ollama":
+      return new OpenAICompatibleProvider({ name, baseURL: cfg.ollamaBaseUrl, apiKey: "", defaultModel: cfg.ollamaModel });
+    case "openai":
+      return new OpenAICompatibleProvider({ name, baseURL: cfg.openaiBaseUrl, apiKey, defaultModel: cfg.openaiModel });
+    case "anthropic":
+      return new AnthropicAdapter({ name, baseURL: cfg.anthropicBaseUrl, apiKey, defaultModel: cfg.anthropicModel });
+    case "openrouter":
+      return new OpenAICompatibleProvider({ name, baseURL: cfg.openRouterBaseUrl, apiKey, defaultModel: cfg.openRouterModel });
+    default:
+      // Closed set: config.ts validates PROVIDER_NAMES and keys are only issued
+      // for that set, so an unknown name is an internal invariant violation.
+      throw new Error(`providerWithKey: unknown provider "${name}"`);
+  }
+}
+
 // Model-prefix routing: gpt-* -> openai, claude-* -> anthropic,
 // gemini-* -> gemini, llama*/nomic* -> ollama, else fallback.
 // OpenRouter signals (checked last, before the fallback):

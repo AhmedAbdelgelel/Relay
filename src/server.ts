@@ -9,6 +9,10 @@ import Fastify from "fastify";
 import { registerChatRoutes } from "./api/routes/chat.js";
 import { registerPlayground } from "./api/routes/playground.js";
 import { registerProviderRoutes } from "./api/routes/providers.js";
+import { CredentialCipher } from "./auth/credentialCipher.js";
+import { createAuthStoresFromEnv } from "./auth/factory.js";
+import { InMemoryApiKeyStore } from "./auth/InMemoryApiKeyStore.js";
+import { InMemoryCredentialStore } from "./auth/InMemoryCredentialStore.js";
 import { createCacheFromEnv } from "./cache/factory.js";
 import { InMemoryVectorStore } from "./cache/InMemoryVectorStore.js";
 import { createSemanticStoreFromEnv } from "./cache/semanticFactory.js";
@@ -27,10 +31,17 @@ export function buildServer() {
   // pgvector needs async migration -> use buildServerAsync() in production.
   const semanticStore = cfg.semanticEnabled && cfg.semanticStore === "memory" ? new InMemoryVectorStore() : undefined;
   const embedder = cfg.semanticEnabled && semanticStore ? createEmbedderFromEnv(cfg) : undefined;
-  registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers });
+  // T26: lane auth stores. Zero-setup path -> in-memory, gateway keys seeded
+  // from GATEWAY_API_KEYS; the pg backend needs async migration, so it is
+  // wired in buildServerAsync() via the auth factory.
+  const auth = {
+    apiKeys: new InMemoryApiKeyStore(cfg.gatewayApiKeys),
+    credentials: new InMemoryCredentialStore(new CredentialCipher(cfg.credEncKey)),
+  };
+  registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
   registerProviderRoutes(app, cfg, providers);
   registerPlayground(app);
-  return { app, cfg, provider, providers, cache, semanticStore, embedder };
+  return { app, cfg, provider, providers, cache, semanticStore, embedder, auth };
 }
 
 export async function buildServerAsync() {
@@ -41,10 +52,11 @@ export async function buildServerAsync() {
   const cache = createCacheFromEnv(cfg);
   const semanticStore = await createSemanticStoreFromEnv(cfg);
   const embedder = semanticStore ? createEmbedderFromEnv(cfg) : undefined;
-  registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers });
+  const auth = await createAuthStoresFromEnv(cfg);
+  registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
   registerProviderRoutes(app, cfg, providers);
   registerPlayground(app);
-  return { app, cfg, provider, providers, cache, semanticStore, embedder };
+  return { app, cfg, provider, providers, cache, semanticStore, embedder, auth };
 }
 
 const isMain = process.argv[1]?.endsWith("server.ts") || process.argv[1]?.endsWith("server.js");
