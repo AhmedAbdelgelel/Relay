@@ -131,7 +131,7 @@ describe("createProvidersFromEnv", () => {
     const empty = createProvidersFromEnv(cfg());
     expect(empty.has("mock")).toBe(true);
     expect(empty.has("ollama")).toBe(true);
-    expect(empty.has("openrouter")).toBe(true); // free tier needs no key
+    expect(empty.has("openrouter")).toBe(true); // registered regardless of key
     expect(empty.has("gemini")).toBe(false);
     expect(empty.has("openai")).toBe(false);
     expect(empty.has("anthropic")).toBe(false);

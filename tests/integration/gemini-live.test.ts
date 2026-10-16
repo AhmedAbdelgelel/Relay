@@ -6,11 +6,12 @@ import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { OpenAICompatibleProvider } from "../../src/providers/OpenAICompatibleProvider.js";
 import { laneAuth } from "../helpers/lane.js";
 
-// Live-Gemini prompt tests. Opt-in only, matching tests/integration/redis-live.test.ts,
-// because they call the real Gemini endpoint: they must never run in the default
+// Live-Gemini prompt tests. Manual opt-in only — Gemini is no longer the
+// default live leg; OpenRouter free models are (openrouter-live.test.ts via
+// `npm run test:live`). Run with: GEMINI_LIVE_TEST=1 npm test.
+// These call the real Gemini endpoint, so they must never run in the default
 // `npm test` sweep, which stays hermetic, offline and free.
-// Run with: npm run test:live  (or: GEMINI_LIVE_TEST=1 npm test).
-// These hit the real Gemini OpenAI-compat endpoint — non-stream, stream, and
+// They hit the real Gemini OpenAI-compat endpoint — non-stream, stream, and
 // the full gateway HTTP path (validation + headers + OpenAI response shape).
 const LIVE = process.env.GEMINI_LIVE_TEST === "1";
 const HAS_KEY = !!process.env.GEMINI_API_KEY;
