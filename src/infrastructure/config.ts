@@ -1,7 +1,14 @@
 // STANDARDIZATION of all env parsing in one place.
 // Nothing else reads process.env directly.
 
-export type ProviderName = "mock" | "gemini" | "ollama" | "openai" | "anthropic" | "openrouter";
+/**
+ * Single source of truth for the provider names (T27/R4): the `PROVIDER` env
+ * check, `GATEWAY_API_KEYS` seeds, and the register route's zod enum all read
+ * this one list — add a provider here and every consumer follows.
+ */
+export const PROVIDER_NAMES = ["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"] as const;
+
+export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
 export type EmbeddingProviderName = "mock" | "gemini" | "ollama";
 
@@ -79,8 +86,6 @@ function nonNegative(env: NodeJS.ProcessEnv, name: string, fallback: number): nu
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-const PROVIDER_NAMES: ProviderName[] = ["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"];
-
 function seedApiKeys(raw: string): SeedApiKey[] {
   if (raw.trim() === "") return [];
   return raw.split(",").flatMap((entry) => {
@@ -96,7 +101,7 @@ function seedApiKeys(raw: string): SeedApiKey[] {
     if (!tenant || !provider || !name || !key) {
       throw new Error(`GATEWAY_API_KEYS entry must be tenant:provider:name:key with no empty part, got "${entry.trim()}"`);
     }
-    if (!(PROVIDER_NAMES as string[]).includes(provider)) {
+    if (!(PROVIDER_NAMES as readonly string[]).includes(provider)) {
       throw new Error(`GATEWAY_API_KEYS provider must be one of ${PROVIDER_NAMES.join("|")}, got "${provider}"`);
     }
     return [{ tenant, provider: provider as ProviderName, name, key }];
@@ -105,8 +110,8 @@ function seedApiKeys(raw: string): SeedApiKey[] {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const provider = (env["PROVIDER"] ?? "mock").toLowerCase() as ProviderName;
-  if (!["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"].includes(provider)) {
-    throw new Error(`PROVIDER must be one of mock|gemini|ollama|openai|anthropic|openrouter, got "${provider}"`);
+  if (!(PROVIDER_NAMES as readonly string[]).includes(provider)) {
+    throw new Error(`PROVIDER must be one of ${PROVIDER_NAMES.join("|")}, got "${provider}"`);
   }
   const embeddingProvider = (env["EMBEDDING_PROVIDER"] ?? "mock").toLowerCase() as EmbeddingProviderName;
   if (!["mock", "gemini", "ollama"].includes(embeddingProvider)) {

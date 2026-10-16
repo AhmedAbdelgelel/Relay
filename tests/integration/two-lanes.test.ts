@@ -459,6 +459,8 @@ describe("T26 auth failures through the wired route", () => {
     expect(res.headers["x-key-id"]).toBe(lanes.laneFor("mock").keyId);
     expect(calls.calls).toBe(0);
     expect(cacheCounter.gets).toBe(0);
+    // T27/R1: the wired mismatch counts with the guard's other auth rejections.
+    expect(metrics.snapshot().auth_rejects_total).toBe(1);
     await app.close();
   });
 

@@ -31,6 +31,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import { GatewayError } from "../domain/types.js";
 import { log } from "../infrastructure/logger.js";
+import { metrics } from "../observability/metrics.js";
 import type { ApiKeyStore } from "./ApiKeyStore.js";
 
 /** Request-scoped lane context. Key material is never part of a registered lane. */
@@ -90,6 +91,8 @@ function authReject(
   message: string,
   storeError?: string,
 ): FastifyReply {
+  // T27/R1: every guard rejection counts once; accepted lanes never touch this.
+  metrics.inc("auth_rejects_total");
   log({
     request_id: requestId,
     status,
