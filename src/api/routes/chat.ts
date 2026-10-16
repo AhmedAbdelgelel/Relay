@@ -123,6 +123,8 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     // provider work (the T25 guard owns the error vocabulary).
     const mismatch = laneProviderMismatch(auth, active.name);
     if (mismatch) {
+      // T27/R1: a mismatch is an auth rejection like the guard's own 401/403/503.
+      metrics.inc("auth_rejects_total");
       log({ request_id: requestId, provider: active.name, status: mismatch.status, error_code: mismatch.code });
       return reply.status(mismatch.status).send({ error: { code: mismatch.code, message: mismatch.message, request_id: requestId } });
     }

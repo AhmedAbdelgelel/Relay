@@ -11,6 +11,7 @@ import { InMemoryApiKeyStore } from "../../src/auth/InMemoryApiKeyStore.js";
 import { createLaneGuard, laneProviderMismatch, type LaneAuth } from "../../src/auth/laneGuard.js";
 import { GatewayError } from "../../src/domain/types.js";
 import { loadConfig } from "../../src/infrastructure/config.js";
+import { metrics } from "../../src/observability/metrics.js";
 
 function seededStore(entries: string): InMemoryApiKeyStore {
   const cfg = loadConfig({ PROVIDER: "mock", GATEWAY_API_KEYS: entries } as NodeJS.ProcessEnv);
@@ -232,6 +233,37 @@ describe("lane guard contract — header/lane matrix (T25)", () => {
     app.post("/v1/usage", { preHandler: second }, async () => ({ ok: 2 }));
     expect((await app.inject(post())).statusCode).toBe(401);
     expect((await app.inject({ method: "POST", url: "/v1/usage" })).statusCode).toBe(401);
+  });
+
+  it("auth_rejects_total counts every guard rejection (401/403/503) and no success (T27/R1)", async () => {
+    metrics.reset();
+    const store = new InMemoryApiKeyStore();
+    const valid = expectCreated(await store.create({ tenant: "acme", provider: "gemini", name: "main" }));
+    const revoked = expectCreated(await store.create({ tenant: "acme", provider: "gemini", name: "rev" }));
+    await store.revoke(revoked.record.id);
+    const expired = expectCreated(
+      await store.create({
+        tenant: "acme",
+        provider: "gemini",
+        name: "exp",
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    const down = fakeStore(async () => ({ status: "unavailable", reason: "pool down" }));
+    const { app } = echoApp(store);
+    const { app: downApp } = echoApp(down);
+
+    expect((await app.inject(post())).statusCode).toBe(401); // missing everything
+    expect((await app.inject(post({ authorization: "Bearer lg_bogus" }))).statusCode).toBe(401); // invalid key
+    expect((await app.inject(post({ authorization: `Bearer ${revoked.key}` }))).statusCode).toBe(403); // revoked
+    expect((await app.inject(post({ authorization: `Bearer ${expired.key}` }))).statusCode).toBe(403); // expired
+    expect((await downApp.inject(post({ authorization: "Bearer lg_anything" }))).statusCode).toBe(503); // store down
+    expect(metrics.snapshot().auth_rejects_total).toBe(5);
+
+    // Accepted lanes — registered and anonymous — never touch the counter.
+    expect((await app.inject(post({ authorization: `Bearer ${valid.key}` }))).statusCode).toBe(200);
+    expect((await app.inject(post({ "x-provider-key": "sk-anon-counter" }))).statusCode).toBe(200);
+    expect(metrics.snapshot().auth_rejects_total).toBe(5);
   });
 });
 

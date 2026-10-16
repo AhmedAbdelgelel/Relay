@@ -9,6 +9,8 @@ import Fastify from "fastify";
 import { registerChatRoutes } from "./api/routes/chat.js";
 import { registerPlayground } from "./api/routes/playground.js";
 import { registerProviderRoutes } from "./api/routes/providers.js";
+import { registerRegisterRoutes } from "./api/routes/register.js";
+import { registerUsageRoutes } from "./api/routes/usage.js";
 import { CredentialCipher } from "./auth/credentialCipher.js";
 import { createAuthStoresFromEnv } from "./auth/factory.js";
 import { InMemoryApiKeyStore } from "./auth/InMemoryApiKeyStore.js";
@@ -39,6 +41,9 @@ export function buildServer() {
     credentials: new InMemoryCredentialStore(new CredentialCipher(cfg.credEncKey)),
   };
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
+  // T27: register is open; usage reuses the lane guard over the same stores.
+  registerRegisterRoutes(app, auth);
+  registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers);
   registerPlayground(app);
   return { app, cfg, provider, providers, cache, semanticStore, embedder, auth };
@@ -54,6 +59,8 @@ export async function buildServerAsync() {
   const embedder = semanticStore ? createEmbedderFromEnv(cfg) : undefined;
   const auth = await createAuthStoresFromEnv(cfg);
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
+  registerRegisterRoutes(app, auth);
+  registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers);
   registerPlayground(app);
   return { app, cfg, provider, providers, cache, semanticStore, embedder, auth };

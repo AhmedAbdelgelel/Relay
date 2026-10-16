@@ -24,6 +24,8 @@ export interface MetricsSnapshot {
   semantic_hist_090_092: number;
   semantic_hist_092_095: number;
   semantic_hist_gte_095: number;
+  /** T27/R1: every auth rejection (guard 401/403/503, provider mismatch, usage anonymous). */
+  auth_rejects_total: number;
   semantic_lookups: number;
   avg_semantic_score: number;
   cache_lookups: number;
@@ -88,6 +90,7 @@ const ZERO: MetricsSnapshot = {
   semantic_hist_090_092: 0,
   semantic_hist_092_095: 0,
   semantic_hist_gte_095: 0,
+  auth_rejects_total: 0,
   semantic_lookups: 0,
   avg_semantic_score: 0,
   cache_lookups: 0,
@@ -120,7 +123,8 @@ export type CounterName =
   | "semantic_hist_lt_090"
   | "semantic_hist_090_092"
   | "semantic_hist_092_095"
-  | "semantic_hist_gte_095";
+  | "semantic_hist_gte_095"
+  | "auth_rejects_total";
 
 export class GatewayMetrics {
   private c: Record<CounterName, number> = {
@@ -145,6 +149,7 @@ export class GatewayMetrics {
     semantic_hist_090_092: 0,
     semantic_hist_092_095: 0,
     semantic_hist_gte_095: 0,
+    auth_rejects_total: 0,
   };
   private cacheLookups = 0;
   private cacheLatencyTotal = 0;
