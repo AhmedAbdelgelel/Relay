@@ -18,21 +18,21 @@ client request
   → reply with evidence headers
 ```
 
-Two safety nets keep caching honest: up to 50 identical requests arriving at once trigger only **one** provider call (single-flight), and a pure policy function re-checks provider, model, temperature, and similarity threshold before any paraphrased answer is reused.
+Two safety nets keep caching honest: up to 50 identical requests arriving at once trigger only **one** provider call (single-flight), and a pure policy function re-checks provider, model, temperature, tenant identity, system-prompt fingerprint, policy version, and the similarity threshold before any paraphrased answer is reused.
 
 ## What it does
 
-- **Chat, OpenAI-style** — `POST /v1/chat/completions` accepts the familiar `model`, `messages`, `temperature`, `max_tokens`, and `stream` fields, answers in the OpenAI shape, and translates provider failures into one clean error vocabulary (`400`/`429`/`502`/`504`). Streaming arrives as Server-Sent Events and survives client disconnects.
+- **Chat, OpenAI-style** — `POST /v1/chat/completions` accepts the familiar `model`, `messages`, `temperature`, `max_tokens`, and `stream` fields, answers in the OpenAI shape, and translates provider failures into one clean error vocabulary (`400`/`429`/`502`/`504`). Streaming arrives as Server-Sent Events and survives client disconnects. Requests are lane-gated: a registered `Authorization: Bearer lg_…` key unlocks caching and accounting, while the anonymous try-out lane (`x-provider-key`) needs no signup but always bypasses the cache. Every reply carries lane + cache evidence headers (`x-lane`, `x-key-id`, `x-cache`, …).
 - **Exact cache (free repeats)** — ask the identical question twice and the second answer comes from cache in milliseconds: nothing is re-sent to the provider. Formatting noise (whitespace, key order) doesn't fool it, while any real change (model, prompt, temperature) correctly misses.
 - **Semantic cache (free paraphrases)** — ask the same thing in different words and, when similarity is high and every safety check passes, you get the cached answer with a similarity score in the headers. Cross-tenant, cross-model, and temperature-drifted prompts never reuse.
 - **Five providers, one interface** — OpenAI, Anthropic, Gemini, Ollama, and OpenRouter behind a single adapter shape, with per-model routing (`gpt-*`, `claude-*`, `gemini-*`, `llama*`, free-tier `:free` models). New providers plug into the factory without touching the HTTP layer.
 - **Stampede protection** — 50 identical requests landing at the same instant cause exactly one provider call; everyone shares the answer.
-- **Self-service access (foundation ready)** — seed API keys via env config and database tables for gateway keys plus encrypted provider credentials, so apps can register once and track their own usage.
+- **Self-service access** — `POST /v1/register` takes a provider + upstream key, stores the key encrypted, and returns a one-time `lg_` gateway key. Registered keys are the production lane: caching, per-tenant accounting, and `GET /v1/usage` for your own numbers. Dev can also seed keys via `GATEWAY_API_KEYS`.
 - **Built-in observability** — hit/miss counters, hit rate, avoided provider calls, and latency averages on `GET /metrics`; liveness on `/health`; provider status on `/providers`; plus a point-and-click playground UI.
 
 ## Quickstart
 
-Prerequisites: Node.js 18+.
+Prerequisites: Node.js 20+ (CI and the Docker image run 24).
 
 ```bash
 npm install
@@ -40,21 +40,39 @@ cp .env.example .env   # optional: every variable is documented there
 npm run dev        # serves http://localhost:3000 (mock provider, zero setup)
 ```
 
-Try it (first call is a MISS, the repeat is a HIT — verified live):
+Register an app, then chat with the issued key (first call is a MISS, the repeat is a HIT — verified live):
 
 ```bash
+# 1) one-time signup: provider + upstream key -> lg_… gateway key
+curl -s -X POST localhost:3000/v1/register \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"demo","provider":"mock","provider_key":"unused-for-mock"}'
+# -> {"tenant_id":"…","provider":"mock","key":"lg_…","key_prefix":"lg_ab12c"}
+
+# 2) chat with the key from step 1
+GATEWAY_KEY=lg_…   # paste it here
 curl -s -X POST localhost:3000/v1/chat/completions \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $GATEWAY_KEY" \
   -d '{"model":"mock-model","messages":[{"role":"user","content":"What is the capital of France?"}]}' \
   -D - -o /dev/null | grep -i 'x-cache'
 # x-cache: MISS   (repeat the call → x-cache: HIT)
+
+# no key yet? the anonymous try-out lane works too — always BYPASS, never cached
+curl -s -X POST localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' -H 'x-provider-key: tryout' \
+  -d '{"model":"mock-model","messages":[{"role":"user","content":"hello"}]}' \
+  -D - -o /dev/null | grep -i 'x-cache'
+# x-cache: BYPASS
 ```
 
 | Endpoint | Method | Notes |
 |---|---|---|
-| `/v1/chat/completions` | POST | Chat. Reply carries `x-cache` (`HIT`/`SEMANTIC_HIT`/`MISS`/`BYPASS`), `x-cache-hash`, and latency evidence. |
+| `/v1/chat/completions` | POST | Chat. Registered key (`Bearer lg_…`) → caches + accounting; `x-provider-key` → anonymous try-out (BYPASS). Reply carries `x-lane`, `x-key-id`, `x-cache` (`HIT`/`SEMANTIC_HIT`/`MISS`/`BYPASS`), `x-cache-hash`, and latency evidence. |
+| `/v1/register` | POST | Open signup: `{name, provider, provider_key}` → one-time `lg_` gateway key (stored hashed, shown once). |
+| `/v1/usage` | GET | The caller's own request/cache numbers (registered keys only). |
 | `/health` | GET | Liveness + backend wiring (no secrets). |
-| `/metrics` | GET | Counters, hit rate, avoided calls, latencies. |
+| `/metrics` | GET | Global counters, hit rate, avoided calls, latencies. |
 | `/providers` | GET | Configured providers (never key values). |
 | `/` | GET | Playground UI. |
 
@@ -72,14 +90,14 @@ Every variable, with its default, is listed in [`.env.example`](.env.example). T
 
 ## Test report
 
-Full suite green, verified across three consecutive runs: **31 files passed, 2 skipped (33 total)** — **336 tests passed, 6 skipped, 0 failed (342 total)** — plus a clean `tsc` typecheck. The two skipped files are the opt-in live tests (real Gemini via `npm run test:live`, real Redis via `REDIS_LIVE_TEST=1`). No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free. Run it yourself with `npm test` / `npm run typecheck`.
+Full suite green at the last verified run (2026-10-16): **36 files passed, 2 skipped (38 total)** — **415 tests passed, 6 skipped, 0 failed (421 total)** — plus a clean `tsc` typecheck. The two skipped files are the opt-in live tests (real Gemini via `npm run test:live`, real Redis via `REDIS_LIVE_TEST=1`). No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
 
 Measured performance (mock provider with 50 ms simulated latency):
 
 | Measurement | Result |
 |---|---|
-| Cached reply (HIT, n=20) | avg 2.8 ms, p95 5 ms |
-| Provider reply (MISS, n=5) | avg 73.2 ms, median 63 ms |
+| Cached reply (HIT, n=20) | avg 0.6 ms, p95 2 ms |
+| Provider reply (MISS, n=5) | avg 64.6 ms, median 61 ms |
 | Provider calls avoided in that run | 20 of 25 requests |
 | 50 concurrent identical misses | 1 provider call, all 50 served |
 | Paraphrase of a cached answer | `SEMANTIC_HIT` + similarity header, no provider call |
@@ -94,8 +112,13 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/types/types.test.ts` | 12 | Type-level contracts |
 | `tests/contract/provider-conformance.test.ts` | 23 | Every adapter behaves identically |
 | `tests/contract/chat.contract.test.ts` | 10 | HTTP contract, headers, SSE, error mapping |
+| `tests/contract/lane-guard.test.ts` | 17 | 401/403/503 matrix, lane precedence, revoked/expired keys |
+| `tests/contract/api-key-store.test.ts` | 21 | Key lifecycle: issue, verify, revoke, expire |
+| `tests/contract/credential-store.test.ts` | 14 | Encrypted provider-credential round-trip |
+| `tests/contract/register-usage.contract.test.ts` | 8 | Register → key → own-usage contract |
 | `tests/integration/exact-cache.test.ts` | 14 | HIT/MISS, eviction, hash discipline |
 | `tests/integration/semantic-cache.test.ts` | 9 | Paraphrase HIT, policy blocks, degradation |
+| `tests/integration/two-lanes.test.ts` | 13 | Registered vs anonymous: caching, accounting, isolation |
 | `tests/integration/providers-routing.test.ts` | 20 | Prefix routing incl. OpenRouter free tier |
 | `tests/integration/provider.test.ts` | 5 | Timeout/429/502 normalization |
 | `tests/integration/openai-errors.test.ts` | 7 | Upstream error mapping |
@@ -103,11 +126,11 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/integration/response-normalization.test.ts` | 6 | Canonical answers incl. streams |
 | `tests/integration/http-real.test.ts` | 1 | Real-socket (no premature abort) |
 | `tests/integration/ui-live.test.ts` | 4 | Playground against a real server |
-| `tests/integration/playground-send.test.ts` | 2 | Playground send regression |
+| `tests/integration/playground-send.test.ts` | 4 | Playground send + CORS/path guards |
 | `tests/integration/gemini-live.test.ts` | 3 | Real Gemini upstream (opt-in) |
 | `tests/integration/redis-live.test.ts` | 3 | Real Redis round-trip (opt-in, skipped by default) |
 | `tests/cache-eval.test.ts` | 23 | Exact/semantic/TTL/degradation batteries |
-| `tests/eval-numbers.test.ts` | 4 | Latency numbers + avoided-call accounting |
+| `tests/eval-numbers.test.ts` | 6 | Threshold sweep + determinism + latency numbers |
 | `tests/unit/chat-ui.test.ts` | 35 | Playground UI behavior |
 | `tests/unit/response-normalizer.test.ts` | 23 | Markup stripping rules |
 | `tests/unit/inmemory-vector.test.ts` | 9 | Vector store incl. TTL |
@@ -123,7 +146,7 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/unit/redis-commands.test.ts` | 4 | Redis command surface |
 | `tests/unit/inmemory-eviction.test.ts` | 4 | LRU bounds + TTL |
 | `tests/unit/vector-eviction.test.ts` | 2 | Vector-store bounds |
-| `tests/unit/metrics.test.ts` | 3 | Counter/derived-metric math |
+| `tests/unit/metrics.test.ts` | 5 | Counter/derived-metric math |
 
 </details>
 
@@ -131,15 +154,17 @@ Measured performance (mock provider with 50 ms simulated latency):
 
 What is deliberately not built yet is tracked in the repo docs, not hidden here — see `agent/implementation.md` Part A (Non-Goals) and the open tasks in `agent/loop.md` §Tasks. The headline items:
 
-- **Access lanes are not wired yet** — gateway-key verification on chat, `POST /v1/register`, and `GET /v1/usage` are specified but pending (T24–T27). Today the chat endpoint does not authenticate callers (do not expose it to the public internet yet), and upstream credentials come from the environment only.
-- **Ops gaps** — no Prometheus/tracing export, no rate limits or quotas, single process only (in-memory single-flight; cache caps: 1000 exact entries, 2000 semantic entries). Docker image and CI workflow are pending (T21).
+- **Anonymous lane never caches** — a try-out credential (`x-provider-key`) always bypasses both caches and has no tenant accounting; production traffic should register a gateway key. There are no rate limits or quotas yet, so keep the gateway behind your own network edge.
+- **Ops gaps** — no Prometheus/tracing export; single process only (in-memory single-flight; cache caps: 1000 exact entries, 2000 semantic entries). CI runs typecheck + the offline test sweep; the `Dockerfile` exists but CI does not build the image yet.
+- **Storage defaults** — the zero-setup path keeps gateway keys and provider credentials in memory; set `DATABASE_URL` (+ `CRED_ENC_KEY`) to move keys/credentials and the semantic store to PostgreSQL/pgvector.
 - **Provider prompt-cache discounts** (`cached_tokens`) are not surfaced; `estimated_cost_saved` is only as accurate as the `SAVED_USD_PER_1K_TOKENS` price you set.
 
 ## Layout
 
 ```
 src/
-  api/routes/      HTTP only (chat, providers, playground)
+  api/routes/      HTTP only (chat, register, usage, providers, playground)
+  auth/            gateway keys, encrypted credentials, lane guard
   providers/       one adapter interface + factories + capability gate
   cache/           exact cache, vector stores, single-flight
   embeddings/      mock / gemini / ollama vector providers
@@ -149,6 +174,8 @@ src/
   infrastructure/  config (all env parsing), error mapping
   server.ts        composition root (wiring lives only here)
 db/migrations/     SQL schemas applied automatically at boot
+scripts/eval/      deterministic threshold-sweep harness (`npm run eval`)
+evaluation/        generated semantic-threshold report (the eval gate)
 tests/             unit / integration / contract (mirrors src)
 agent/             product spec, architecture notes, and review checklists
 ```
