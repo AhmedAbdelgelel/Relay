@@ -66,6 +66,21 @@ curl -s -X POST localhost:3000/v1/chat/completions \
 # x-cache: BYPASS
 ```
 
+### Run with Docker
+
+The image builds reproducibly (Node 24 alpine, non-root, `HEALTHCHECK` on `/health`), and CI builds + boots it on every push, publishing it on every main push — so you can pull instead of building:
+
+```bash
+docker pull ghcr.io/ahmedabdelgelel/relay:latest
+docker run --rm -p 3000:3000 ghcr.io/ahmedabdelgelel/relay:latest
+
+# or build it yourself
+docker build -t relay .
+docker run --rm -p 3000:3000 relay
+```
+
+Configuration works the same as above: pass `-e KEY=VALUE` flags or `--env-file .env` (`.env.example` documents every variable; `PORT` is honored).
+
 | Endpoint | Method | Notes |
 |---|---|---|
 | `/v1/chat/completions` | POST | Chat. Registered key (`Bearer lg_…`) → caches + accounting; `x-provider-key` → anonymous try-out (BYPASS). Reply carries `x-lane`, `x-key-id`, `x-cache` (`HIT`/`SEMANTIC_HIT`/`MISS`/`BYPASS`), `x-cache-hash`, and latency evidence. |
@@ -81,7 +96,7 @@ Every variable, with its default, is listed in [`.env.example`](.env.example). T
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` / `PROVIDER` | `3000` / `mock` | Port and default provider (`mock` needs no keys) |
-| `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPEN_ROUTER_KEY`, `OLLAMA_BASE_URL` | — | Only the providers you route to need keys (`:free` OpenRouter models need none) |
+| `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPEN_ROUTER_KEY`, `OLLAMA_BASE_URL` | — | Only the providers you route to need keys; OpenRouter `:free` models are $0 but still need a (free) account key |
 | `REDIS_URL` | — (in-memory LRU) | Exact-cache backend |
 | `CACHE_TTL_S` / `CACHE_ENABLED` | `3600` / `true` | Exact-cache TTL and switch |
 | `EMBEDDING_PROVIDER` / `SEMANTIC_THRESHOLD` / `SEMANTIC_TOP_K` | `mock` / `0.92` / `3` | Embedder, paraphrase-similarity cutoff, candidates |
@@ -90,7 +105,7 @@ Every variable, with its default, is listed in [`.env.example`](.env.example). T
 
 ## Test report
 
-Full suite green at the last verified run (2026-10-16): **36 files passed, 2 skipped (38 total)** — **415 tests passed, 6 skipped, 0 failed (421 total)** — plus a clean `tsc` typecheck. The two skipped files are the opt-in live tests (real Gemini via `npm run test:live`, real Redis via `REDIS_LIVE_TEST=1`). No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
+Full suite green at the last verified run (2026-10-16): **36 files passed, 3 skipped (39 total)** — **415 tests passed, 9 skipped, 0 failed (424 total)** — plus a clean `tsc` typecheck. The three skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`), real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
 
 Measured performance (mock provider with 50 ms simulated latency):
 
@@ -127,7 +142,8 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/integration/http-real.test.ts` | 1 | Real-socket (no premature abort) |
 | `tests/integration/ui-live.test.ts` | 4 | Playground against a real server |
 | `tests/integration/playground-send.test.ts` | 4 | Playground send + CORS/path guards |
-| `tests/integration/gemini-live.test.ts` | 3 | Real Gemini upstream (opt-in) |
+| `tests/integration/openrouter-live.test.ts` | 3 | Real OpenRouter free-tier upstream (opt-in via `test:live`) |
+| `tests/integration/gemini-live.test.ts` | 3 | Real Gemini upstream (manual opt-in) |
 | `tests/integration/redis-live.test.ts` | 3 | Real Redis round-trip (opt-in, skipped by default) |
 | `tests/cache-eval.test.ts` | 23 | Exact/semantic/TTL/degradation batteries |
 | `tests/eval-numbers.test.ts` | 6 | Threshold sweep + determinism + latency numbers |
@@ -155,7 +171,7 @@ Measured performance (mock provider with 50 ms simulated latency):
 What is deliberately not built yet is tracked in the repo docs, not hidden here — see `agent/implementation.md` Part A (Non-Goals) and the open tasks in `agent/loop.md` §Tasks. The headline items:
 
 - **Anonymous lane never caches** — a try-out credential (`x-provider-key`) always bypasses both caches and has no tenant accounting; production traffic should register a gateway key. There are no rate limits or quotas yet, so keep the gateway behind your own network edge.
-- **Ops gaps** — no Prometheus/tracing export; single process only (in-memory single-flight; cache caps: 1000 exact entries, 2000 semantic entries). CI runs typecheck + the offline test sweep; the `Dockerfile` exists but CI does not build the image yet.
+- **Ops gaps** — no Prometheus/tracing export; single process only (in-memory single-flight; cache caps: 1000 exact entries, 2000 semantic entries). CI runs typecheck + the offline test sweep and the image leg (docker build + boot + `/health`); main pushes publish `ghcr.io/ahmedabdelgelel/relay:latest`, so `docker pull` works without a local build.
 - **Storage defaults** — the zero-setup path keeps gateway keys and provider credentials in memory; set `DATABASE_URL` (+ `CRED_ENC_KEY`) to move keys/credentials and the semantic store to PostgreSQL/pgvector.
 - **Provider prompt-cache discounts** (`cached_tokens`) are not surfaced; `estimated_cost_saved` is only as accurate as the `SAVED_USD_PER_1K_TOKENS` price you set.
 
