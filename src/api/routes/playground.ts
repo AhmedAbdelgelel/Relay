@@ -12,7 +12,10 @@ const MIME: Record<string, string> = {
 
 async function serve(reply: FastifyReply, root: string, file: string): Promise<void> {
   const target = path.normalize(path.join(root, file));
-  if (!target.startsWith(root)) {
+  // Path-boundary check: a plain startsWith(root) guard would also admit a
+  // sibling directory (…/public-evil/…); path.relative confines reads to root.
+  const rel = path.relative(root, target);
+  if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
     reply.status(403).send("forbidden");
     return;
   }
@@ -33,11 +36,11 @@ export function registerPlayground(app: FastifyInstance): void {
   app.addHook("onRequest", async (req, reply) => {
     if (!corsRoutes.has(req.url.split("?")[0])) return;
     reply.header("access-control-allow-origin", "*");
-    reply.header("access-control-allow-headers", "content-type, x-request-id, authorization");
+    reply.header("access-control-allow-headers", "content-type, x-request-id, authorization, x-api-key, x-provider-key");
     reply.header("access-control-allow-methods", "GET, POST, OPTIONS");
     reply.header(
       "access-control-expose-headers",
-      "x-request-id, x-provider, x-cache, x-cache-hash, x-latency-ms, x-coalesced, x-semantic-similarity",
+      "x-request-id, x-provider, x-cache, x-cache-hash, x-latency-ms, x-coalesced, x-semantic-similarity, x-lane, x-key-id",
     );
     if (req.method === "OPTIONS") {
       reply.status(204).send();

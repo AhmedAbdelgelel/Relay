@@ -122,3 +122,24 @@ describe("playground send regression (bundle loads + Send streams a reply)", () 
     expect(card.textContent).toContain("mock");
   });
 });
+
+describe("playground HTTP surface: CORS evidence + static path boundary", () => {
+  it("preflight exposes lane evidence and allows the credential headers", async () => {
+    const res = await realFetch(address + "/v1/chat/completions", {
+      method: "OPTIONS",
+      headers: { origin: "http://localhost:5173", "access-control-request-headers": "content-type, x-provider-key" },
+    });
+    expect(res.status).toBe(204);
+    const expose = res.headers.get("access-control-expose-headers") || "";
+    expect(expose).toContain("x-lane");
+    expect(expose).toContain("x-key-id");
+    const allow = res.headers.get("access-control-allow-headers") || "";
+    expect(allow).toContain("x-provider-key");
+    expect(allow).toContain("x-api-key");
+  });
+
+  it("static reads cannot escape public/ (403 on traversal)", async () => {
+    const res = await realFetch(address + "/js/..%2F..%2F..%2Fpackage.json");
+    expect(res.status).toBe(403);
+  });
+});
