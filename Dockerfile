@@ -2,6 +2,8 @@
 #
 # T21 — reproducible image for the LLM gateway.
 # Two stages: build (full deps + tsc) -> runtime (prod deps only, non-root).
+# Debian slim, not alpine: the built-in local embedder needs onnxruntime's
+# glibc native binding. The default embedding model is baked in below.
 #
 #   docker build -t llm-gateway .
 #   docker run --rm -p 3000:3000 llm-gateway
@@ -14,7 +16,7 @@
 # ---------- Stage 1: build ----------
 # Full dependency install on purpose: the build needs the `typescript`
 # devDependency for `npm run build` (= tsc -p tsconfig.json -> dist/).
-FROM node:24-alpine AS build
+FROM node:24-slim AS build
 WORKDIR /app
 # Lockfile-first copy: the npm layer stays cached when only source changes.
 COPY package.json package-lock.json ./
@@ -24,7 +26,7 @@ COPY src ./src
 RUN npm run build
 
 # ---------- Stage 2: runtime ----------
-FROM node:24-alpine AS runtime
+FROM node:24-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # package.json must ship as well: it carries "type":"module", which the ESM
@@ -32,6 +34,11 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
+# Bake the default local-embedding model (quantized ONNX, ~109 MB) into the
+# image so semantic caching works fully offline with zero first-request
+# download. Runs the real code path (./.cache under /app); a failure here
+# fails the build on purpose — the image promises a working embedder.
+RUN node --input-type=module -e "const { LocalEmbedding } = await import('/app/dist/embeddings/LocalEmbedding.js'); await new LocalEmbedding().embed('warmup', AbortSignal.timeout(600000));"
 # The playground UI is served from process.cwd()/public at runtime
 # (src/api/routes/playground.ts) -> public/ must exist under /app.
 COPY public ./public

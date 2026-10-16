@@ -25,6 +25,7 @@ Two safety nets keep caching honest: up to 50 identical requests arriving at onc
 - **Chat, OpenAI-style** — `POST /v1/chat/completions` accepts the familiar `model`, `messages`, `temperature`, `max_tokens`, and `stream` fields, answers in the OpenAI shape, and translates provider failures into one clean error vocabulary (`400`/`429`/`502`/`504`). Streaming arrives as Server-Sent Events and survives client disconnects. Requests are lane-gated: a registered `Authorization: Bearer lg_…` key unlocks caching and accounting, while the anonymous try-out lane (`x-provider-key`) needs no signup but always bypasses the cache. Every reply carries lane + cache evidence headers (`x-lane`, `x-key-id`, `x-cache`, …).
 - **Exact cache (free repeats)** — ask the identical question twice and the second answer comes from cache in milliseconds: nothing is re-sent to the provider. Formatting noise (whitespace, key order) doesn't fool it, while any real change (model, prompt, temperature) correctly misses.
 - **Semantic cache (free paraphrases)** — ask the same thing in different words and, when similarity is high and every safety check passes, you get the cached answer with a similarity score in the headers. Cross-tenant, cross-model, and temperature-drifted prompts never reuse.
+- **Built-in embedder — no keys, no services** — `EMBEDDING_PROVIDER=local` runs a quantized ONNX sentence-transformer (`all-mpnet-base-v2`, 768-d) in-process: real paraphrase matching with no API key and no Ollama, fully offline after the one-time model download (baked into the Docker image). Measured paraphrase cosine ≈ 0.91 vs ≈ 0.18 for unrelated prompts.
 - **Five providers, one interface** — OpenAI, Anthropic, Gemini, Ollama, and OpenRouter behind a single adapter shape, with per-model routing (`gpt-*`, `claude-*`, `gemini-*`, `llama*`, free-tier `:free` models). New providers plug into the factory without touching the HTTP layer.
 - **Stampede protection** — 50 identical requests landing at the same instant cause exactly one provider call; everyone shares the answer.
 - **Self-service access** — `POST /v1/register` takes a provider + upstream key, stores the key encrypted, and returns a one-time `lg_` gateway key. Registered keys are the production lane: caching, per-tenant accounting, and `GET /v1/usage` for your own numbers. Dev can also seed keys via `GATEWAY_API_KEYS`.
@@ -68,7 +69,7 @@ curl -s -X POST localhost:3000/v1/chat/completions \
 
 ### Run with Docker
 
-The image builds reproducibly (Node 24 alpine, non-root, `HEALTHCHECK` on `/health`), and CI builds + boots it on every push, publishing it on every main push — so you can pull instead of building:
+The image builds reproducibly (Node 24 Debian slim, non-root, `HEALTHCHECK` on `/health`), with the default embedding model baked in — set `EMBEDDING_PROVIDER=local` and semantic caching works fully offline with zero downloads. CI builds + boots it on every push and publishes it on every main push, so you can pull instead of building:
 
 ```bash
 docker pull ghcr.io/ahmedabdelgelel/relay:latest
@@ -99,13 +100,13 @@ Every variable, with its default, is listed in [`.env.example`](.env.example). T
 | `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPEN_ROUTER_KEY`, `OLLAMA_BASE_URL` | — | Only the providers you route to need keys; OpenRouter `:free` models are $0 but still need a (free) account key |
 | `REDIS_URL` | — (in-memory LRU) | Exact-cache backend |
 | `CACHE_TTL_S` / `CACHE_ENABLED` | `3600` / `true` | Exact-cache TTL and switch |
-| `EMBEDDING_PROVIDER` / `SEMANTIC_THRESHOLD` / `SEMANTIC_TOP_K` | `mock` / `0.92` / `3` | Embedder, paraphrase-similarity cutoff, candidates |
+| `EMBEDDING_PROVIDER` / `SEMANTIC_THRESHOLD` / `SEMANTIC_TOP_K` | `mock` / `0.92` / `3` | Embedder (`local` = built-in ONNX: no key, no server), paraphrase-similarity cutoff, candidate count |
 | `SEMANTIC_STORE` / `DATABASE_URL` | `memory` / — | `pgvector` for production |
 | `GATEWAY_API_KEYS` / `CRED_ENC_KEY` | — | Dev seed keys (`tenant:provider:name:key`); encryption key for stored provider credentials |
 
 ## Test report
 
-Full suite green at the last verified run (2026-10-16): **36 files passed, 3 skipped (39 total)** — **415 tests passed, 9 skipped, 0 failed (424 total)** — plus a clean `tsc` typecheck. The three skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`), real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
+Full suite green at the last verified run (2026-10-16): **37 files passed, 4 skipped (41 total)** — **421 tests passed, 11 skipped, 0 failed (432 total)** — plus a clean `tsc` typecheck. The four skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`), the built-in embedder against the real ONNX model via `EMBEDDING_LIVE_TEST=1`, real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
 
 Measured performance (mock provider with 50 ms simulated latency):
 
@@ -144,6 +145,7 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/integration/playground-send.test.ts` | 4 | Playground send + CORS/path guards |
 | `tests/integration/openrouter-live.test.ts` | 3 | Real OpenRouter free-tier upstream (opt-in via `test:live`) |
 | `tests/integration/gemini-live.test.ts` | 3 | Real Gemini upstream (manual opt-in) |
+| `tests/integration/embedding-live.test.ts` | 2 | Real built-in ONNX embedder (opt-in) |
 | `tests/integration/redis-live.test.ts` | 3 | Real Redis round-trip (opt-in, skipped by default) |
 | `tests/cache-eval.test.ts` | 23 | Exact/semantic/TTL/degradation batteries |
 | `tests/eval-numbers.test.ts` | 6 | Threshold sweep + determinism + latency numbers |
@@ -151,11 +153,12 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/unit/response-normalizer.test.ts` | 23 | Markup stripping rules |
 | `tests/unit/inmemory-vector.test.ts` | 9 | Vector store incl. TTL |
 | `tests/unit/semantic-reuse.test.ts` | 17 | Policy reason matrix |
-| `tests/unit/semantic-config.test.ts` | 13 | Semantic misconfig fails loud |
+| `tests/unit/semantic-config.test.ts` | 14 | Semantic misconfig fails loud |
 | `tests/unit/control-plane-smoke.test.ts` | 14 | Health/metrics/providers wiring |
 | `tests/unit/pgvector-sql.test.ts` | 11 | SQL contract for pgvector |
 | `tests/unit/auth-config.test.ts` | 9 | Seed-key parsing + auth migration |
 | `tests/unit/embeddings.test.ts` | 5 | Embedder behavior + dimensions |
+| `tests/unit/local-embedding.test.ts` | 5 | Built-in embedder: lazy load, dim/NaN guards |
 | `tests/unit/normalize.test.ts` | 7 | Canonical key identity rules |
 | `tests/unit/singleflight.test.ts` | 5 | Coalescing incl. abort isolation |
 | `tests/unit/fallback.test.ts` | 31 | Fallback chain: jittered backoff, target breaker, error precedence |
@@ -173,6 +176,7 @@ What is deliberately not built yet is tracked in the repo docs, not hidden here 
 - **Anonymous lane never caches** — a try-out credential (`x-provider-key`) always bypasses both caches and has no tenant accounting; production traffic should register a gateway key. There are no rate limits or quotas yet, so keep the gateway behind your own network edge.
 - **Ops gaps** — no Prometheus/tracing export; single process only (in-memory single-flight; cache caps: 1000 exact entries, 2000 semantic entries). CI runs typecheck + the offline test sweep and the image leg (docker build + boot + `/health`); main pushes publish `ghcr.io/ahmedabdelgelel/relay:latest`, so `docker pull` works without a local build.
 - **Storage defaults** — the zero-setup path keeps gateway keys and provider credentials in memory; set `DATABASE_URL` (+ `CRED_ENC_KEY`) to move keys/credentials and the semantic store to PostgreSQL/pgvector.
+- **Embedding model download** — outside the Docker image (where it is baked in), the first `local` embed downloads ~109 MB into `./.cache`, then runs fully offline. With the local embedder use `SEMANTIC_THRESHOLD` 0.80–0.85; the shipped `0.92` default was calibrated on the controlled eval distribution (`npm run eval`).
 - **Provider prompt-cache discounts** (`cached_tokens`) are not surfaced; `estimated_cost_saved` is only as accurate as the `SAVED_USD_PER_1K_TOKENS` price you set.
 
 ## Layout
@@ -183,7 +187,7 @@ src/
   auth/            gateway keys, encrypted credentials, lane guard
   providers/       one adapter interface + factories + capability gate
   cache/           exact cache, vector stores, single-flight
-  embeddings/      mock / gemini / ollama vector providers
+  embeddings/      mock / gemini / ollama / local vector providers
   policy/          pure reuse-safety decision function
   domain/          types, canonicalization, response normalization
   observability/   metrics snapshot, JSON logger
