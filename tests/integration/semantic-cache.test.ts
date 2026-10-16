@@ -8,6 +8,12 @@ import { EMBEDDING_DIM, type EmbeddingProvider } from "../../src/embeddings/Embe
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { metrics } from "../../src/observability/metrics.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
+import { issueLane, laneAuth } from "../helpers/lane.js";
+
+// T26: chat requests need a registered lane (key bound to "mock"); tenant
+// identity comes from the key, so extra tenants issue extra lanes.
+const lane = await laneAuth("mock");
+const laneHeaders = lane.headersFor("mock");
 
 function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
@@ -53,17 +59,17 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
     const provider = new MockProvider();
     const orig = provider.chat.bind(provider);
     provider.chat = (async (...a: Parameters<typeof orig>) => { calls++; return orig(...a); }) as typeof orig;
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lane.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
 
     const first = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] },
     });
     expect(first.statusCode).toBe(200);
     expect(first.headers["x-cache"]).toBe("MISS");
 
     const second = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] },
     });
     expect(second.statusCode).toBe(200);
@@ -80,9 +86,9 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
   it("unrelated prompt is a MISS (no false positive)", async () => {
     const app = Fastify();
     const store = new InMemoryVectorStore();
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] } });
-    const other = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "Give me a BBQ ribs recipe" }] } });
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] } });
+    const other = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "Give me a BBQ ribs recipe" }] } });
     expect(other.headers["x-cache"]).toBe("MISS");
     await app.close();
   });
@@ -90,18 +96,21 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
   it("policy blocks reuse across model / temperature / tenant", async () => {
     const app = Fastify();
     const store = new InMemoryVectorStore();
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] } });
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] } });
 
-    const diffModel = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "other", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] } });
+    const diffModel = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "other", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] } });
     expect(diffModel.headers["x-cache"]).toBe("MISS");
 
-    const diffTemp = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", temperature: 0.1, messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] } });
+    const diffTemp = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", temperature: 0.1, messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] } });
     expect(diffTemp.headers["x-cache"]).toBe("MISS");
 
+    // T26: tenant identity comes from the gateway key — a second tenant's lane
+    // (x-tenant-id is ignored now) must not reuse the first tenant's entry.
+    const tenantB = await issueLane(lane.auth, "mock", "tenant-b");
     const diffTenant = await app.inject({
       method: "POST", url: "/v1/chat/completions",
-      headers: { "x-tenant-id": "tenant-b" },
+      headers: tenantB.headers,
       payload: { model: "m", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] },
     });
     expect(diffTenant.headers["x-cache"]).toBe("MISS");
@@ -111,18 +120,18 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
   it("stream:true bypasses semantic (BYPASS, never SEMANTIC_HIT)", async () => {
     const app = Fastify();
     const store = new InMemoryVectorStore();
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] } });
-    const s = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", stream: true, messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] } });
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] } });
+    const s = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", stream: true, messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] } });
     expect(s.headers["x-cache"]).toBe("BYPASS");
     await app.close();
   });
 
   it("semantic disabled falls back to MISS (exact only)", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider(), cfg({ semanticEnabled: false }), new InMemoryCache());
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] } });
-    const para = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] } });
+    registerChatRoutes(app, new MockProvider(), cfg({ semanticEnabled: false }), new InMemoryCache(), { auth: lane.auth });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] } });
+    const para = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] } });
     expect(para.headers["x-cache"]).toBe("MISS");
     await app.close();
   });
@@ -144,9 +153,9 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
         return unit(0);
       },
     };
-    registerChatRoutes(app, new MockProvider(), cfg({ semanticThreshold: 0.92 }), new InMemoryCache(), { semanticStore: store, embedder: rotator });
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "FIRST gateway question" }] } });
-    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "SECOND gateway question" }] } });
+    registerChatRoutes(app, new MockProvider(), cfg({ semanticThreshold: 0.92 }), new InMemoryCache(), { auth: lane.auth, semanticStore: store, embedder: rotator });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "FIRST gateway question" }] } });
+    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "SECOND gateway question" }] } });
     expect(second.headers["x-cache"]).toBe("MISS");
     await app.close();
   });
@@ -160,8 +169,8 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
       dimension: EMBEDDING_DIM,
       async embed() { throw new Error("embedder down"); },
     };
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { semanticStore: brokenStore, embedder: brokenEmbedder });
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "m", messages: [{ role: "user", content: "hello" }] } });
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth, semanticStore: brokenStore, embedder: brokenEmbedder });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { model: "m", messages: [{ role: "user", content: "hello" }] } });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-cache"]).toBe("MISS");
     await app.close();
@@ -174,20 +183,20 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
     const provider = new MockProvider();
     const orig = provider.chat.bind(provider);
     provider.chat = (async (...a: Parameters<typeof orig>) => { calls++; return orig(...a); }) as typeof orig;
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lane.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
     const seed = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "system", content: "sys-A" }, { role: "user", content: "What is an LLM gateway?" }] },
     });
     expect(seed.headers["x-cache"]).toBe("MISS");
     const changed = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "system", content: "sys-B" }, { role: "user", content: "What is an LLM gateway?" }] },
     });
     expect(changed.headers["x-cache"]).toBe("MISS");
     expect(calls).toBe(2);
     const same = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "system", content: "sys-A" }, { role: "user", content: "Explain what an LLM gateway does?" }] },
     });
     expect(same.headers["x-cache"]).toBe("SEMANTIC_HIT");
@@ -206,22 +215,27 @@ describe("semantic cache e2e (L2: exact MISS -> semantic -> policy -> provider)"
       findSimilar: (embedding: number[], _filter: SemanticFilter, opts: { threshold: number; topK: number }) =>
         inner.findSimilar(embedding, { tenant: "tenant-a", provider: "mock", model: "m" }, opts),
     };
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { semanticStore: leaky, embedder: new ParaphraseEmbedder() });
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth, semanticStore: leaky, embedder: new ParaphraseEmbedder() });
+    // T26: tenant-a seeds under its own key; the leaky store still answers
+    // tenant-a (entry tenant matches) but must never serve tenant-b, because
+    // the reuse policy compares the entry's tenant to the KEY-derived tenant.
+    const tenantA = await issueLane(lane.auth, "mock", "tenant-a");
+    const tenantB = await issueLane(lane.auth, "mock", "tenant-b");
     const seed = await app.inject({
       method: "POST", url: "/v1/chat/completions",
-      headers: { "x-tenant-id": "tenant-a" },
+      headers: tenantA.headers,
       payload: { model: "m", messages: [{ role: "user", content: "What is an LLM gateway?" }] },
     });
     expect(seed.headers["x-cache"]).toBe("MISS");
     const same = await app.inject({
       method: "POST", url: "/v1/chat/completions",
-      headers: { "x-tenant-id": "tenant-a" },
+      headers: tenantA.headers,
       payload: { model: "m", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] },
     });
     expect(same.headers["x-cache"]).toBe("SEMANTIC_HIT");
     const other = await app.inject({
       method: "POST", url: "/v1/chat/completions",
-      headers: { "x-tenant-id": "tenant-b" },
+      headers: tenantB.headers,
       payload: { model: "m", messages: [{ role: "user", content: "Explain what an LLM gateway does?" }] },
     });
     expect(other.headers["x-cache"]).toBe("MISS");

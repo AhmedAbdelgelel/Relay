@@ -15,6 +15,7 @@ import type {
   StreamChunk,
 } from "../src/providers/ProviderAdapter.js";
 import type { ChatRequest, ChatResponse } from "../src/domain/types.js";
+import { issueLane, laneAuth } from "./helpers/lane.js";
 
 function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
@@ -96,24 +97,36 @@ interface ChatPayload {
   stream?: boolean;
 }
 
-async function post(app: FastifyInstance, payload: ChatPayload, headers: Record<string, string> = {}) {
+// T26: every chat request needs a registered lane. The key is bound to the
+// provider each battery routes to ("mock" or the stub brand); the describe
+// blocks below switch `activeLane` so post() stays the single request entry.
+const lanes = await laneAuth("mock", "stub-brand");
+let activeLane: Record<string, string> = lanes.headersFor("mock");
+
+async function post(app: FastifyInstance, payload: ChatPayload, headers: Record<string, string> = activeLane) {
   return app.inject({ method: "POST", url: "/v1/chat/completions", headers, payload });
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-beforeEach(() => metrics.reset());
+beforeEach(() => {
+  metrics.reset();
+  activeLane = lanes.headersFor("mock");
+});
 
 // ---------------------------------------------------------------- exact battery
 
 describe.each([
-  { brand: "mock", make: () => countingMock() },
-  { brand: "stub", make: () => { const s = new StubAdapter(); return { provider: s, calls: () => s.calls }; } },
-])("exact battery (provider: $brand)", ({ make }) => {
+  { brand: "mock", laneProvider: "mock", make: () => countingMock() },
+  { brand: "stub", laneProvider: "stub-brand", make: () => { const s = new StubAdapter(); return { provider: s, calls: () => s.calls }; } },
+])("exact battery (provider: $brand)", ({ make, laneProvider }) => {
+  beforeEach(() => {
+    activeLane = lanes.headersFor(laneProvider);
+  });
   it("identical repeat -> HIT with same content, provider runs once", async () => {
     const { provider, calls } = make();
     const app = Fastify();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth });
     const prompt = "eval exact: name the three states of matter";
     const seed = await post(app, { model: "m", messages: [{ role: "user", content: prompt }] });
     expect(seed.statusCode).toBe(200);
@@ -129,7 +142,7 @@ describe.each([
   it("leading/trailing whitespace variant -> HIT (edge-trim canonicalization)", async () => {
     const { provider } = make();
     const app = Fastify();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth });
     const prompt = "eval exact whitespace probe";
     await post(app, { model: "m", messages: [{ role: "user", content: prompt }] });
     const hit = await post(app, { model: "m", messages: [{ role: "user", content: `      ${prompt}   ` }] });
@@ -140,7 +153,7 @@ describe.each([
   it("temperature change -> MISS, then HIT at the new temperature (own entry)", async () => {
     const { provider } = make();
     const app = Fastify();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth });
     const prompt = "eval exact temperature probe";
     const base = { model: "m", messages: [{ role: "user", content: prompt }] };
     await post(app, { ...base, temperature: 0.7 });
@@ -154,7 +167,7 @@ describe.each([
   it("max_tokens added -> MISS (param is part of identity)", async () => {
     const { provider } = make();
     const app = Fastify();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth });
     const prompt = "eval exact max-tokens probe";
     await post(app, { model: "m", messages: [{ role: "user", content: prompt }] });
     const miss = await post(app, { model: "m", max_tokens: 64, messages: [{ role: "user", content: prompt }] });
@@ -165,7 +178,7 @@ describe.each([
   it("same text under another model -> different x-cache-hash (no cross-model bleed)", async () => {
     const { provider } = make();
     const app = Fastify();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth });
     const prompt = "eval exact model-identity probe";
     const ref = await post(app, { model: "model-a", messages: [{ role: "user", content: prompt }] });
     const alt = await post(app, { model: "model-b", messages: [{ role: "user", content: prompt }] });
@@ -180,7 +193,7 @@ describe.each([
   it("stream:true -> BYPASS (never reads or writes caches)", async () => {
     const { provider } = make();
     const app = Fastify();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth });
     const s = await post(app, { model: "m", stream: true, messages: [{ role: "user", content: "eval exact stream probe" }] });
     expect(s.headers["x-cache"]).toBe("BYPASS");
     await app.close();
@@ -192,7 +205,10 @@ describe.each([
     const orig = slow.chat.bind(slow);
     slow.chat = (async (...a: Parameters<typeof orig>) => { calls++; return orig(...a); }) as typeof orig;
     const app = Fastify();
-    registerChatRoutes(app, slow, cfg(), new InMemoryCache());
+    // This probe always uses a MockProvider ("mock"), whichever battery brand is
+    // running, so its lane key must be bound to "mock" (T26 mismatch rule).
+    activeLane = lanes.headersFor("mock");
+    registerChatRoutes(app, slow, cfg(), new InMemoryCache(), { auth: lanes.auth });
     const prompt = "eval exact stampede probe";
     const results = await Promise.all(
       Array.from({ length: 6 }, () => post(app, { model: "m", messages: [{ role: "user", content: prompt }] })),
@@ -207,7 +223,10 @@ describe.each([
   it("upstream error -> same error twice, never admitted (INV-8)", async () => {
     const { provider, calls } = countingMock({ failure: "server_error" });
     const app = Fastify();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache());
+    // This probe always uses a MockProvider ("mock"), whichever battery brand
+    // is running, so its lane key must be bound to "mock" (T26 mismatch rule).
+    activeLane = lanes.headersFor("mock");
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth });
     const body = { model: "m", messages: [{ role: "user", content: "eval exact error probe" }] };
     const e1 = await post(app, body);
     const e2 = await post(app, body);
@@ -227,7 +246,7 @@ describe("semantic battery (ParaphraseEmbedder double, threshold 0.92)", () => {
     const { provider, calls } = countingMock();
     const app = Fastify();
     const store = new InMemoryVectorStore();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
     const seed = await post(app, { model: "m", messages: [{ role: "user", content: "eval-topic: what is a blorp tower made of?" }] });
     expect(seed.headers["x-cache"]).toBe("MISS");
     const hit = await post(app, { model: "m", messages: [{ role: "user", content: "eval-topic: tell me the material of a blorp tower" }] });
@@ -242,7 +261,7 @@ describe("semantic battery (ParaphraseEmbedder double, threshold 0.92)", () => {
     const { provider } = countingMock();
     const app = Fastify();
     const store = new InMemoryVectorStore();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
     await post(app, { model: "m", temperature: 0.7, messages: [{ role: "user", content: "eval-topic: what is a blorp tower made of?" }] });
     const drift = await post(app, { model: "m", temperature: 0.5, messages: [{ role: "user", content: "eval-topic: tell me the material of a blorp tower" }] });
     expect(drift.headers["x-cache"]).toBe("MISS");
@@ -253,7 +272,7 @@ describe("semantic battery (ParaphraseEmbedder double, threshold 0.92)", () => {
     const { provider } = countingMock();
     const app = Fastify();
     const store = new InMemoryVectorStore();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
     await post(app, { model: "m", messages: [{ role: "user", content: "eval-topic: what is a blorp tower made of?" }] });
     const neg = await post(app, { model: "m", messages: [{ role: "user", content: "give me a haiku about the open ocean" }] });
     expect(neg.headers["x-cache"]).toBe("MISS");
@@ -264,12 +283,15 @@ describe("semantic battery (ParaphraseEmbedder double, threshold 0.92)", () => {
     const { provider } = countingMock();
     const app = Fastify();
     const store = new InMemoryVectorStore();
-    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
+    registerChatRoutes(app, provider, cfg(), new InMemoryCache(), { auth: lanes.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
     await post(app, { model: "m", messages: [{ role: "user", content: "eval-topic: what is a blorp tower made of?" }] });
+    // T26: the tenant now comes from the gateway key (x-tenant-id is ignored),
+    // so tenant isolation is proven with a real second tenant's lane.
+    const tenantB = await issueLane(lanes.auth, "mock", "tenant-b");
     const other = await post(
       app,
       { model: "m", messages: [{ role: "user", content: "eval-topic: tell me the material of a blorp tower" }] },
-      { "x-tenant-id": "tenant-b" },
+      tenantB.headers,
     );
     expect(other.headers["x-cache"]).toBe("MISS");
     await app.close();
@@ -282,7 +304,7 @@ describe("ttl battery (1s TTLs, in-memory stores)", () => {
   it("exact entry HITs within TTL then MISSes after expiry", async () => {
     const { provider } = countingMock();
     const app = Fastify();
-    registerChatRoutes(app, provider, cfg({ cacheTtlSec: 1 }), new InMemoryCache());
+    registerChatRoutes(app, provider, cfg({ cacheTtlSec: 1 }), new InMemoryCache(), { auth: lanes.auth });
     const prompt = "eval ttl exact probe";
     await post(app, { model: "m", messages: [{ role: "user", content: prompt }] });
     expect((await post(app, { model: "m", messages: [{ role: "user", content: prompt }] })).headers["x-cache"]).toBe("HIT");
@@ -295,7 +317,7 @@ describe("ttl battery (1s TTLs, in-memory stores)", () => {
     const { provider } = countingMock();
     const app = Fastify();
     const store = new InMemoryVectorStore();
-    registerChatRoutes(app, provider, cfg({ cacheTtlSec: 1, semanticTtlSec: 1 }), new InMemoryCache(), { semanticStore: store, embedder: new ParaphraseEmbedder() });
+    registerChatRoutes(app, provider, cfg({ cacheTtlSec: 1, semanticTtlSec: 1 }), new InMemoryCache(), { auth: lanes.auth, semanticStore: store, embedder: new ParaphraseEmbedder() });
     await post(app, { model: "m", messages: [{ role: "user", content: "eval-topic ttl seed stone?" }] });
     const hit = await post(app, { model: "m", messages: [{ role: "user", content: "eval-topic ttl paraphrase stone?" }] });
     expect(hit.headers["x-cache"]).toBe("SEMANTIC_HIT");
@@ -326,6 +348,7 @@ describe("degradation battery (slow dependencies)", () => {
   it.fails("hanging embedder degrades to MISS within budget (never hangs)", async () => {
     const app = Fastify();
     registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), {
+      auth: lanes.auth,
       semanticStore: new InMemoryVectorStore(),
       embedder: new HangingEmbedder(),
     });

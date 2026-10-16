@@ -463,12 +463,15 @@ describe("T8 capability gate + redaction", () => {
     };
     const { registerChatRoutes } = await import("../../src/api/routes/chat.js");
     const { loadConfig } = await import("../../src/infrastructure/config.js");
+    const { laneAuth } = await import("../helpers/lane.js");
     const Fastify = (await import("fastify")).default;
     const app = Fastify();
-    registerChatRoutes(app, limited, loadConfig({}));
+    const lane = await laneAuth("limited");
+    registerChatRoutes(app, limited, loadConfig({}), undefined, { auth: lane.auth });
     const res = await app.inject({
       method: "POST",
       url: "/v1/chat/completions",
+      headers: lane.headersFor("limited"),
       payload: { model: "m", messages: [{ role: "user", content: "hi" }], max_tokens: 128 },
     });
     expect(res.statusCode).toBe(400);
@@ -479,6 +482,7 @@ describe("T8 capability gate + redaction", () => {
     const ok = await app.inject({
       method: "POST",
       url: "/v1/chat/completions",
+      headers: lane.headersFor("limited"),
       payload: { model: "m", messages: [{ role: "user", content: "hi" }] },
     });
     expect(ok.statusCode).toBe(200);

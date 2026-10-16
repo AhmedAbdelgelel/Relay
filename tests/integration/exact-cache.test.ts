@@ -7,6 +7,13 @@ import { createCacheFromEnv } from "../../src/cache/factory.js";
 import { buildExactCacheKey } from "../../src/domain/normalize.js";
 import type { GatewayConfig } from "../../src/infrastructure/config.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
+import { laneAuth } from "../helpers/lane.js";
+
+// T26: every chat request needs a registered lane; the key is bound to "mock"
+// because every app in this file routes to a MockProvider. Caching behavior
+// itself is unchanged for the registered lane.
+const lane = await laneAuth("mock");
+const laneHeaders = lane.headersFor("mock");
 
 function cfg(over: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
@@ -36,11 +43,11 @@ describe("exact cache (cache-aside, non-stream only)", () => {
     const provider = new MockProvider();
     const orig = provider.chat.bind(provider);
     provider.chat = (async (...a: Parameters<typeof orig>) => { calls++; return orig(...a); }) as typeof orig;
-    registerChatRoutes(app, provider, cfg(), cache);
-    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, provider, cfg(), cache, { auth: lane.auth });
+    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(first.statusCode).toBe(200);
     expect(first.headers["x-cache"]).toBe("MISS");
-    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(second.statusCode).toBe(200);
     expect(second.headers["x-cache"]).toBe("HIT");
     expect(second.json().choices[0].message.content).toBe(first.json().choices[0].message.content);
@@ -51,10 +58,10 @@ describe("exact cache (cache-aside, non-stream only)", () => {
   it("different prompt is a MISS", async () => {
     const app = Fastify();
     const cache = new InMemoryCache();
-    registerChatRoutes(app, new MockProvider(), cfg(), cache);
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, new MockProvider(), cfg(), cache, { auth: lane.auth });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     const other = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "something else" }] },
     });
     expect(other.headers["x-cache"]).toBe("MISS");
@@ -64,10 +71,10 @@ describe("exact cache (cache-aside, non-stream only)", () => {
   it("padded whitespace hits the same entry", async () => {
     const app = Fastify();
     const cache = new InMemoryCache();
-    registerChatRoutes(app, new MockProvider(), cfg(), cache);
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, new MockProvider(), cfg(), cache, { auth: lane.auth });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     const padded = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "  hello  " }] },
     });
     expect(padded.headers["x-cache"]).toBe("HIT");
@@ -77,8 +84,8 @@ describe("exact cache (cache-aside, non-stream only)", () => {
   it("stream:true bypasses cache", async () => {
     const app = Fastify();
     const cache = new InMemoryCache();
-    registerChatRoutes(app, new MockProvider(), cfg(), cache);
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { ...body, stream: true } });
+    registerChatRoutes(app, new MockProvider(), cfg(), cache, { auth: lane.auth });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { ...body, stream: true } });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-cache"]).toBe("BYPASS");
     await app.close();
@@ -88,15 +95,15 @@ describe("exact cache (cache-aside, non-stream only)", () => {
     const app = Fastify();
     const cache = new InMemoryCache();
     const provider = new MockProvider();
-    registerChatRoutes(app, provider, cfg(), cache);
+    registerChatRoutes(app, provider, cfg(), cache, { auth: lane.auth });
     const { key } = buildExactCacheKey("mock", {
       model: "m", messages: [{ role: "user", content: "hello" }], temperature: 1, stream: false,
     });
     await cache.set(key, "not-json{{{", 3600);
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-cache"]).toBe("MISS");
-    const retry = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    const retry = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(retry.headers["x-cache"]).toBe("HIT");
     await app.close();
   });
@@ -104,9 +111,9 @@ describe("exact cache (cache-aside, non-stream only)", () => {
   it("cache disabled returns DISABLED and never stores", async () => {
     const app = Fastify();
     const cache = new InMemoryCache();
-    registerChatRoutes(app, new MockProvider(), cfg({ cacheEnabled: false }), cache);
-    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
-    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, new MockProvider(), cfg({ cacheEnabled: false }), cache, { auth: lane.auth });
+    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
+    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(first.headers["x-cache"]).toBe("DISABLED");
     expect(second.headers["x-cache"]).toBe("DISABLED");
     expect(await cache.get("llm:exact:v1:mock:anything")).toBeNull();
@@ -116,8 +123,8 @@ describe("exact cache (cache-aside, non-stream only)", () => {
   it("dead Redis degrades to MISS with 200, never 5xx", async () => {
     const app = Fastify();
     const cache = new RedisCache({ url: "redis://127.0.0.1:6399", commandTimeoutMs: 200 });
-    registerChatRoutes(app, new MockProvider(), cfg(), cache);
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, new MockProvider(), cfg(), cache, { auth: lane.auth });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-cache"]).toBe("MISS");
     await app.close();
@@ -144,9 +151,9 @@ describe("x-cache-hash (D3)", () => {
 
   it("identical request: MISS and HIT expose the same hash", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache());
-    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
-    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth });
+    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
+    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(first.headers["x-cache"]).toBe("MISS");
     expect(second.headers["x-cache"]).toBe("HIT");
     expect(first.headers["x-cache-hash"]).toBe(expected());
@@ -156,8 +163,8 @@ describe("x-cache-hash (D3)", () => {
 
   it("stream BYPASS still reports the key it would have used", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache());
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: { ...body, stream: true } });
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: { ...body, stream: true } });
     expect(res.headers["x-cache"]).toBe("BYPASS");
     expect(res.headers["x-cache-hash"]).toBe(expected());
     await app.close();
@@ -165,8 +172,8 @@ describe("x-cache-hash (D3)", () => {
 
   it("cache disabled (DISABLED) still reports the hash", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider(), cfg({ cacheEnabled: false }), new InMemoryCache());
-    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, new MockProvider(), cfg({ cacheEnabled: false }), new InMemoryCache(), { auth: lane.auth });
+    const res = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(res.headers["x-cache"]).toBe("DISABLED");
     expect(res.headers["x-cache-hash"]).toBe(expected());
     await app.close();
@@ -174,14 +181,14 @@ describe("x-cache-hash (D3)", () => {
 
   it("hash follows identity rules: whitespace-trimmed same, temperature/prompt differ", async () => {
     const app = Fastify();
-    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache());
-    const base = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, new MockProvider(), cfg(), new InMemoryCache(), { auth: lane.auth });
+    const base = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     const padded = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { model: "m", messages: [{ role: "user", content: "  hello  " }] },
     });
     const other = await app.inject({
-      method: "POST", url: "/v1/chat/completions",
+      method: "POST", url: "/v1/chat/completions", headers: laneHeaders,
       payload: { ...body, temperature: 0.1 },
     });
     expect(padded.headers["x-cache-hash"]).toBe(base.headers["x-cache-hash"]);
@@ -200,11 +207,11 @@ describe("x-cache-hash (D3)", () => {
       const res = await orig(...a);
       return { ...res, content: "" };
     }) as typeof orig;
-    registerChatRoutes(app, provider, cfg(), cache);
-    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, provider, cfg(), cache, { auth: lane.auth });
+    const first = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(first.statusCode).toBe(200);
     expect(first.headers["x-cache"]).toBe("MISS");
-    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(second.statusCode).toBe(200);
     expect(second.headers["x-cache"]).toBe("MISS");
     expect(calls).toBe(2);
@@ -220,9 +227,9 @@ describe("x-cache-hash (D3)", () => {
       const res = await orig(...a);
       return { ...res, content: "   \n  " };
     }) as typeof orig;
-    registerChatRoutes(app, provider, cfg(), cache);
-    await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
-    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", payload: body });
+    registerChatRoutes(app, provider, cfg(), cache, { auth: lane.auth });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
+    const second = await app.inject({ method: "POST", url: "/v1/chat/completions", headers: laneHeaders, payload: body });
     expect(second.headers["x-cache"]).toBe("MISS");
     await app.close();
   });

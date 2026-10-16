@@ -45,6 +45,9 @@ beforeAll(async () => {
   process.env.GEMINI_API_KEY = "";
   process.env.OPENAI_API_KEY = "";
   process.env.ANTHROPIC_API_KEY = "";
+  // T26: seed a gateway key bound to "mock" (the routed provider for the
+  // gemini-* model the playground sends) — chat is lane-gated now.
+  process.env.GATEWAY_API_KEYS = "t:mock:playground-send:lg_playground_send_key";
   const built = buildServer();
   app = built.app;
   address = await app.listen({ port: 0, host: "127.0.0.1" });
@@ -62,6 +65,12 @@ beforeAll(async () => {
   });
   vi.stubGlobal("navigator", dom.window.navigator);
   vi.stubGlobal("localStorage", dom.window.localStorage);
+  // T26: registered lane for the playground — the stored API config mirrors a
+  // user pasting the seeded key into the "Connect via API" fields.
+  dom.window.localStorage.setItem(
+    "llm-gateway-api-v1",
+    JSON.stringify({ baseUrl: "", apiKey: "lg_playground_send_key" }),
+  );
   vi.stubGlobal("fetch", (input: unknown, init?: RequestInit) => {
     const raw = String((input as { url?: string })?.url ?? input);
     return realFetch(/^https?:/.test(raw) ? raw : address + raw, init);
