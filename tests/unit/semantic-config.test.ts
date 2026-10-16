@@ -50,6 +50,11 @@ describe("semantic config + factory", () => {
     expect(loadConfig(env({ PROVIDER: "openrouter", OPEN_ROUTER_KEY: "sk-or-test" })).openRouterKey).toBe("sk-or-test");
   });
 
+  it("EMBEDDING_PROVIDER accepts local (built-in ONNX) and rejects typos", () => {
+    expect(loadConfig(env({ EMBEDDING_PROVIDER: "local" })).embeddingProvider).toBe("local");
+    expect(() => loadConfig(env({ EMBEDDING_PROVIDER: "locl" }))).toThrow(/EMBEDDING_PROVIDER/);
+  });
+
   it("disabled semantic returns undefined (no store)", async () => {
     const c = loadConfig(env({ SEMANTIC_ENABLED: "0" }));
     await expect(createSemanticStoreFromEnv(c)).resolves.toBeUndefined();

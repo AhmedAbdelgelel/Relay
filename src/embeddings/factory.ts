@@ -3,6 +3,7 @@
 import type { GatewayConfig } from "../infrastructure/config.js";
 import type { EmbeddingProvider } from "./EmbeddingProvider.js";
 import { GeminiEmbedding } from "./GeminiEmbedding.js";
+import { LocalEmbedding } from "./LocalEmbedding.js";
 import { MockEmbedding } from "./MockEmbedding.js";
 import { OllamaEmbedding } from "./OllamaEmbedding.js";
 
@@ -18,6 +19,9 @@ export function createEmbedderFromEnv(cfg: GatewayConfig): EmbeddingProvider {
         baseUrl: cfg.ollamaBaseUrl.replace(/\/v1$/, ""),
         model: cfg.embeddingModel || undefined,
       });
+    case "local":
+      // Built-in ONNX embeddings: no key, no server; loads on first embed only.
+      return new LocalEmbedding({ model: cfg.embeddingModel || undefined });
     case "mock":
       return new MockEmbedding();
   }

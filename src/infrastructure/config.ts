@@ -10,7 +10,7 @@ export const PROVIDER_NAMES = ["mock", "gemini", "ollama", "openai", "anthropic"
 
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
-export type EmbeddingProviderName = "mock" | "gemini" | "ollama";
+export type EmbeddingProviderName = "mock" | "gemini" | "ollama" | "local";
 
 export type SemanticStoreName = "memory" | "pgvector";
 
@@ -114,8 +114,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     throw new Error(`PROVIDER must be one of ${PROVIDER_NAMES.join("|")}, got "${provider}"`);
   }
   const embeddingProvider = (env["EMBEDDING_PROVIDER"] ?? "mock").toLowerCase() as EmbeddingProviderName;
-  if (!["mock", "gemini", "ollama"].includes(embeddingProvider)) {
-    throw new Error(`EMBEDDING_PROVIDER must be one of mock|gemini|ollama, got "${embeddingProvider}"`);
+  if (!["mock", "gemini", "ollama", "local"].includes(embeddingProvider)) {
+    throw new Error(`EMBEDDING_PROVIDER must be one of mock|gemini|ollama|local, got "${embeddingProvider}"`);
   }
   const semanticStore = (env["SEMANTIC_STORE"] ?? "memory").toLowerCase() as SemanticStoreName;
   if (!["memory", "pgvector"].includes(semanticStore)) {
