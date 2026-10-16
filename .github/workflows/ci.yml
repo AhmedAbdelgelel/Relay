@@ -58,7 +58,7 @@ jobs:
 
       - name: Boot container and wait for /health
         run: |
-          docker run -d --name relay-ci -e PORT=3000 -p 3000:3000 relay:ci
+          docker run -d --name relay-ci -e PORT=3000 -e EMBEDDING_PROVIDER=local -e SEMANTIC_THRESHOLD=0.80 -p 3000:3000 relay:ci
           ok=0
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:3000/health >/dev/null 2>&1; then ok=1; break; fi
@@ -72,6 +72,26 @@ jobs:
           echo "--- /health ---"
           curl -fsS http://127.0.0.1:3000/health
           echo
+
+      # End-to-end proof of the baked embedder: register, seed a prompt (MISS),
+      # then ask the same question reworded — answered from the semantic cache
+      # with similarity evidence, entirely offline (model baked into the image).
+      - name: Semantic smoke (baked embeddings, paraphrase HIT)
+        run: |
+          KEY=$(curl -fsS -X POST http://127.0.0.1:3000/v1/register \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"ci","provider":"mock","provider_key":"unused"}' \
+            | sed -E 's/.*"key":"([^"]+)".*/\1/')
+          test -n "$KEY"
+          first=$(curl -fsS -D - -o /dev/null -X POST http://127.0.0.1:3000/v1/chat/completions \
+            -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+            -d '{"model":"mock-model","messages":[{"role":"user","content":"What is the capital of France?"}]}')
+          echo "$first" | grep -i '^x-cache: miss' || { echo "$first"; exit 1; }
+          second=$(curl -fsS -D - -o /dev/null -X POST http://127.0.0.1:3000/v1/chat/completions \
+            -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+            -d '{"model":"mock-model","messages":[{"role":"user","content":"Which city is the capital of France?"}]}')
+          echo "$second" | grep -i '^x-cache: semantic_hit' || { echo "$second"; exit 1; }
+          echo "$second" | grep -i '^x-semantic-similarity: 0\.' || { echo "$second"; exit 1; }
 
       - name: Verify container HEALTHCHECK turns healthy
         run: |
