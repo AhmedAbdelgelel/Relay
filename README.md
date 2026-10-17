@@ -20,6 +20,38 @@ client request
 
 Two safety nets keep caching honest: up to 50 identical requests arriving at once trigger only **one** provider call (single-flight), and a pure policy function re-checks provider, model, temperature, tenant identity, system-prompt fingerprint, policy version, and the similarity threshold before any paraphrased answer is reused.
 
+## Architecture
+
+One process, layered like a ports-and-adapters app: HTTP at the edge, pure policy in the core, every external system behind a typed port. `src/server.ts` is the composition root — the only place that decides which concrete implementations are wired.
+
+```mermaid
+flowchart TD
+  client["Client app / Playground"] --> api
+
+  subgraph relay["Relay — one Node process"]
+    api["API layer<br/>/v1/chat/completions · /v1/register · /v1/usage · /providers · /health · /metrics"]
+    guard["Lane guard<br/>verified lg_… key or anonymous try-out"]
+    router["Router<br/>model prefix → adapter · capability gate"]
+    l1["L1 exact cache<br/>sha256 of the canonical request · memory / Redis"]
+    l2["L2 semantic cache<br/>embed → top-K → pure reuse policy · memory / pgvector"]
+    sf["Single-flight<br/>N identical misses → 1 provider call"]
+    chain["Fallback chain<br/>retries · jittered backoff · per-target breaker"]
+    adapters["Provider adapters<br/>OpenAI-compatible · Anthropic · Gemini · Ollama"]
+    api --> guard --> router --> l1 --> l2 --> sf --> chain --> adapters
+    l2 -.-> embed["Embedder<br/>local ONNX · Gemini · Ollama · mock"]
+    api -.-> obs["Observability<br/>metrics · evidence headers · JSON logs"]
+  end
+
+  adapters --> upstream["Upstream LLM APIs"]
+  guard -.-> pg[("PostgreSQL + pgvector<br/>optional: keys · credentials · semantic rows")]
+  l1 -.-> redis[("Redis<br/>optional L1 backend")]
+```
+
+- **Edge (`src/api/routes/`)**: Fastify routes with HTTP concerns only — validation, evidence headers, SSE framing, error vocabulary. No provider SDKs here.
+- **Core ports (`src/auth`, `src/cache`, `src/embeddings`, `src/providers`, `src/policy`)**: interfaces with swappable implementations (memory / Redis / PostgreSQL; mock / API / ONNX). The reuse decision is a pure function, testable without a network.
+- **Serving path**: validate → lane guard → model-prefix routing → capability gate → L1 → L2 → single-flight → fallback chain. Answers are normalized *before* they enter either cache, so a cached reply and a live reply are byte-identical.
+- **Safety invariants**: anonymous try-outs never read or write cache; semantic reuse re-checks tenant, provider, model, temperature, system fingerprint, policy version and threshold; one circuit breaker per target; cache/embedder failures degrade to `MISS`, never to a 5xx.
+
 ## What it does
 
 - **Chat, OpenAI-style** — `POST /v1/chat/completions` accepts the familiar `model`, `messages`, `temperature`, `max_tokens`, and `stream` fields, answers in the OpenAI shape, and translates provider failures into one clean error vocabulary (`400`/`429`/`502`/`504`). Streaming arrives as Server-Sent Events and survives client disconnects. Requests are lane-gated: a registered `Authorization: Bearer lg_…` key unlocks caching and accounting, while the anonymous try-out lane (`x-provider-key`) needs no signup but always bypasses the cache. Every reply carries lane + cache evidence headers (`x-lane`, `x-key-id`, `x-cache`, …).
@@ -104,9 +136,26 @@ Every variable, with its default, is listed in [`.env.example`](.env.example). T
 | `SEMANTIC_STORE` / `DATABASE_URL` | `memory` / — | `pgvector` for production |
 | `GATEWAY_API_KEYS` / `CRED_ENC_KEY` | — | Dev seed keys (`tenant:provider:name:key`); encryption key for stored provider credentials |
 
+## Control plane UI
+
+Two UIs ship in this repo — one zero-build console, one full app:
+
+- **`web/` (recommended) — Next.js control plane.** A TypeScript + Next.js 16 (App Router) app: playground with streaming chat and cache-evidence rendering, live request inspector, cache control room, and provider status. It talks to the gateway through a same-origin proxy (`GATEWAY_URL`, default `http://localhost:3000`) — no CORS setup, no keys in the bundle.
+
+  ```bash
+  cd web && npm install
+  npm run dev          # http://localhost:3001 (start the gateway first)
+  ```
+
+  See [`web/README.md`](web/README.md) for scripts, architecture, and tests.
+
+- **`public/` — the original zero-build console**, served by the gateway itself; kept unchanged for parity and its test contracts.
+
+Both speak the same gateway contract. A registered `lg_…` key unlocks caching and accounting; the anonymous try-out lane (`x-provider-key`) needs no signup but always bypasses the cache — the UI sends it automatically when no key is configured, so a fresh checkout can send a first request immediately.
+
 ## Test report
 
-Full suite green at the last verified run (2026-10-17): **37 files passed, 4 skipped (41 total)** — **423 tests passed, 11 skipped, 0 failed (434 total)** — plus a clean `tsc` typecheck. The four skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`), the built-in embedder against the real ONNX model via `EMBEDDING_LIVE_TEST=1`, real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
+Full suite green at the last verified run (2026-10-17): **20 files passed, 4 skipped (24 total)** — **266 tests passed, 11 skipped, 0 failed (277 total)** — plus a clean `tsc` typecheck. The default sweep is an HTTP-level end-to-end suite (108 tests that drive the real Fastify app via `app.inject()` and real sockets, with upstreams replaced by local fakes) plus focused keepers that guard what an HTTP test cannot reach: type contracts, the reuse-policy matrix, normalizer rules, SQL/Redis command builders, the ONNX embedder, the key lifecycle, and the jsdom UI suites. The four skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`), the built-in embedder against the real ONNX model via `EMBEDDING_LIVE_TEST=1`, real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
 
 Measured performance (mock provider with 50 ms simulated latency):
 
@@ -125,47 +174,30 @@ Measured performance (mock provider with 50 ms simulated latency):
 
 | Test file | Tests | What it proves |
 |---|---|---|
-| `tests/types/types.test.ts` | 12 | Type-level contracts |
-| `tests/contract/provider-conformance.test.ts` | 23 | Every adapter behaves identically |
-| `tests/contract/chat.contract.test.ts` | 10 | HTTP contract, headers, SSE, error mapping |
-| `tests/contract/lane-guard.test.ts` | 17 | 401/403/503 matrix, lane precedence, revoked/expired keys |
-| `tests/contract/api-key-store.test.ts` | 21 | Key lifecycle: issue, verify, revoke, expire |
-| `tests/contract/credential-store.test.ts` | 14 | Encrypted provider-credential round-trip |
-| `tests/contract/register-usage.contract.test.ts` | 8 | Register → key → own-usage contract |
-| `tests/integration/exact-cache.test.ts` | 14 | HIT/MISS, eviction, hash discipline |
-| `tests/integration/semantic-cache.test.ts` | 9 | Paraphrase HIT, policy blocks, degradation |
-| `tests/integration/two-lanes.test.ts` | 13 | Registered vs anonymous: caching, accounting, isolation |
-| `tests/integration/providers-routing.test.ts` | 20 | Prefix routing incl. OpenRouter free tier |
-| `tests/integration/provider.test.ts` | 5 | Timeout/429/502 normalization |
-| `tests/integration/openai-errors.test.ts` | 7 | Upstream error mapping |
-| `tests/integration/singleflight-stampede.test.ts` | 4 | 50→1 coalescing, metrics |
-| `tests/integration/response-normalization.test.ts` | 6 | Canonical answers incl. streams |
-| `tests/integration/http-real.test.ts` | 1 | Real-socket (no premature abort) |
-| `tests/integration/ui-live.test.ts` | 4 | Playground against a real server |
-| `tests/integration/playground-send.test.ts` | 4 | Playground send + CORS/path guards |
-| `tests/integration/openrouter-live.test.ts` | 3 | Real OpenRouter free-tier upstream (opt-in via `test:live`) |
-| `tests/integration/gemini-live.test.ts` | 3 | Real Gemini upstream (manual opt-in) |
-| `tests/integration/embedding-live.test.ts` | 2 | Real built-in ONNX embedder (opt-in) |
-| `tests/integration/redis-live.test.ts` | 3 | Real Redis round-trip (opt-in, skipped by default) |
-| `tests/cache-eval.test.ts` | 23 | Exact/semantic/TTL/degradation batteries |
+| `tests/e2e/lanes.e2e.test.ts` | 18 | Lane guard matrix over real HTTP: 401/403/503, key precedence, anonymous BYPASS, revoked/expired keys, register + usage contracts |
+| `tests/e2e/exact-cache.e2e.test.ts` | 16 | Hash identity + evidence header, TTL, admission, LRU eviction, malformed entries, single-flight stampede and failure |
+| `tests/e2e/semantic-cache.e2e.test.ts` | 18 | Paraphrase HIT + similarity, threshold, policy blocks (temperature / system / model / tenant), TTL, tenant leak-proofing, degradation, independent toggles |
+| `tests/e2e/streaming.e2e.test.ts` | 10 | SSE frames + terminal usage + `[DONE]`, normalizer across chunk boundaries, pre-first-token JSON errors incl. `retry_after`, request timeout, mid-stream close, failover |
+| `tests/e2e/fallback.e2e.test.ts` | 11 | Prefix routing, provider-scoped entries, retry→failover, breaker open/skip, all-open 502, anonymous never borrows env adapters |
+| `tests/e2e/upstream-adapters.e2e.test.ts` | 18 | Adapter wire contracts vs local fake upstreams: request bodies, headers, error maps, `stream_options` retry, credential resolution matrix |
+| `tests/e2e/platform.e2e.test.ts` | 13 | health/providers/metrics hygiene, playground statics + CORS + traversal guard, validation matrix, capability gate, config invariants, real-socket boot + client-abort |
+| `tests/e2e/long-context-cache.e2e.test.ts` | 4 | Multi-KB payloads, eviction absorption, hash stability (see the long-context section) |
 | `tests/eval-numbers.test.ts` | 6 | Threshold sweep + determinism + latency numbers |
-| `tests/unit/chat-ui.test.ts` | 35 | Playground UI behavior |
-| `tests/unit/response-normalizer.test.ts` | 23 | Markup stripping rules |
-| `tests/unit/inmemory-vector.test.ts` | 9 | Vector store incl. TTL |
-| `tests/unit/semantic-reuse.test.ts` | 17 | Policy reason matrix |
-| `tests/unit/semantic-config.test.ts` | 14 | Semantic misconfig fails loud |
+| `tests/types/types.test.ts` | 12 | Type-level contracts |
+| `tests/contract/api-key-store.test.ts` | 21 | Key lifecycle: issue, verify, revoke, rotate, expire |
+| `tests/unit/chat-ui.test.ts` | 35 | Playground UI behavior (jsdom) |
 | `tests/unit/control-plane-smoke.test.ts` | 14 | Health/metrics/providers wiring |
+| `tests/unit/response-normalizer.test.ts` | 23 | Markup stripping rules |
+| `tests/unit/semantic-reuse.test.ts` | 17 | Policy reason matrix |
 | `tests/unit/pgvector-sql.test.ts` | 11 | SQL contract for pgvector |
-| `tests/unit/auth-config.test.ts` | 9 | Seed-key parsing + auth migration |
-| `tests/unit/embeddings.test.ts` | 5 | Embedder behavior + dimensions |
 | `tests/unit/local-embedding.test.ts` | 7 | Built-in embedder: lazy load, retry-on-failure, dim/NaN guards |
-| `tests/unit/normalize.test.ts` | 7 | Canonical key identity rules |
-| `tests/unit/singleflight.test.ts` | 5 | Coalescing incl. abort isolation |
-| `tests/unit/fallback.test.ts` | 31 | Fallback chain: jittered backoff, target breaker, error precedence |
 | `tests/unit/redis-commands.test.ts` | 4 | Redis command surface |
-| `tests/unit/inmemory-eviction.test.ts` | 4 | LRU bounds + TTL |
-| `tests/unit/vector-eviction.test.ts` | 2 | Vector-store bounds |
-| `tests/unit/metrics.test.ts` | 5 | Counter/derived-metric math |
+| `tests/integration/playground-send.test.ts` | 4 | Playground send + CORS/path guards |
+| `tests/integration/ui-live.test.ts` | 4 | Playground against a real server |
+| `tests/integration/openrouter-live.test.ts` | 3 | Real OpenRouter free-tier upstream (opt-in via `test:live`, skipped) |
+| `tests/integration/gemini-live.test.ts` | 3 | Real Gemini upstream (manual opt-in, skipped) |
+| `tests/integration/embedding-live.test.ts` | 2 | Real built-in ONNX embedder (opt-in, skipped) |
+| `tests/integration/redis-live.test.ts` | 3 | Real Redis round-trip (opt-in, skipped) |
 
 </details>
 
@@ -196,6 +228,45 @@ src/
 db/migrations/     SQL schemas applied automatically at boot
 scripts/eval/      deterministic threshold-sweep harness (`npm run eval`)
 evaluation/        generated semantic-threshold report (the eval gate)
-tests/             unit / integration / contract (mirrors src)
+tests/e2e/         HTTP-level end-to-end suite (inject + real sockets, fake upstreams)
+tests/             focused keepers (types, UI, policy, infra contracts)
 agent/             product spec, architecture notes, and review checklists
+public/            original zero-build control plane (served by the gateway)
+web/               Next.js control-plane UI (see web/README.md)
 ```
+
+## Long-context & high-cardinality cache (measured)
+
+Two batteries prove the caching layers hold up at content sizes and
+cardinalities the fixture tests never touch:
+
+1. **In-suite (hermetic, runs on every commit)** — `tests/e2e/long-context-cache.e2e.test.ts`, 4 tests:
+   6KB×40 exact pass with reconciled accounting; LRU cap-20 eviction absorbed
+   by the semantic layer (0 extra provider calls); semantic cap-30 row
+   eviction (victim paraphrase → MISS → re-saved → next paraphrase HIT);
+   64KB canonical-hash stability (MISS→HIT, byte-identical).
+2. **Live battery below** — real HTTP against the production build
+   (`node dist/server.js`), cache=memory, semantic=memory-vector,
+   embedder=local (built-in ONNX), threshold 0.80, default caps
+   (L1 1000 / L2 2000, TTL 3600s), Node 24.
+
+| Leg | Load | Numbers |
+|---|---|---|
+| Seed flood | 1200 unique ~8KB bodies (9.83 MB) | 197.6 s wall · 6.07 req/s · p50 165 ms · p95 180 ms · max 255 ms |
+| Replay all | 1199 × semantic_hit + 1 × hit | 199.1 s wall · 6.03 req/s · p50 165 ms · p95 182 ms · max 344 ms |
+| 30-way stampede, same 8KB prompt | 30 concurrent | 4.85 s wall · 30× semantic_hit · 0 provider calls |
+| Single 256KB payload | 1 prompt | MISS 246 ms → HIT 249 ms, byte-identical |
+| Short paraphrase probes | 40 probes | p50 15 ms · p95 22 ms · 39/40 semantic reuse |
+| Accounting (whole battery) | 2472 requests total | provider calls **2** (0.08%) · exact misses 2471 · semantic_hits 2469 (avg sim 0.9606) · tokens_in exactly 10/req · saved $0.0741 |
+
+Semantic similarity histogram over the 2469 semantic hits:
+&lt;0.90 ×55 · 0.90–0.92 ×50 · 0.92–0.95 ×266 · ≥0.95 ×2098.
+
+Honest notes: at ~8KB payloads the local embedding plus the cosine scan over
+the live store dominates per-request cost (~165 ms at ~1k–2k rows, sustained
+6 req/s); the 2000-row cap bounds that cost (oldest-first eviction, measured
+in-suite). `provider_calls_avoided` counts exact + coalesced reuse only —
+semantic reuse is tracked in `semantic_hits` (the savings metric includes
+semantic reuse). Long near-duplicate bodies legitimately collapse into one
+semantic entry: replaying 1200 slightly-varied 8KB prompts costs **zero**
+extra provider calls.

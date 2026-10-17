@@ -1,11 +1,3 @@
-// Production auth stores on real Postgres, mirroring the pgvector adapter
-// pattern (src/cache/PgVectorStore.ts): minimal SqlClient (fake in tests,
-// node-postgres Pool in prod via createPgClient), fully parameterized SQL, and
-// table DDL embedded below (migrateAuthTables); db/migrations/002_api_keys.sql
-// is the manual-apply record of the same migration.
-//
-// Never writes plaintext: api_keys stores sha256 hex + display prefix,
-// provider_credentials stores the versioned AES-256-GCM blob.
 
 import type { SqlClient } from "../cache/PgVectorStore.js";
 import {
@@ -159,8 +151,6 @@ export class PgApiKeyStore implements ApiKeyStore {
     const key = generateApiKey();
     const keyPrefix = apiKeyPrefixOf(key);
     try {
-      // One statement = atomic: the old row is revoked and its replacement
-      // inserted under the same tenant/provider/name/expires_at, or neither is.
       const { rows } = await this.db.query<KeyRow>(
         `WITH old AS (
            UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now())
@@ -224,7 +214,6 @@ export class PgCredentialStore implements CredentialStore {
     }
     const row = rows[0];
     if (!row) return { status: "not_found" };
-    // Decrypt errors propagate on purpose: corruption must fail loud.
     return { status: "ok", providerKey: this.cipher.decrypt(row.enc_key) };
   }
 
@@ -265,7 +254,6 @@ const PROVIDER_CREDENTIALS_TABLE = `CREATE TABLE IF NOT EXISTS provider_credenti
   PRIMARY KEY (tenant_id, provider)
 )`;
 
-/** Bring a Postgres database to the T23 auth schema (fails loud at boot). */
 export async function migrateAuthTables(db: SqlClient): Promise<void> {
   await db.query(API_KEYS_TABLE);
   await db.query(PROVIDER_CREDENTIALS_TABLE);

@@ -1,8 +1,3 @@
-// Composition root. Only file allowed to wire config -> provider -> routes.
-// CHOOSING happens here via createProviderFromEnv; routes never choose.
-// Modular monolith: src/api depends on ports only;
-// this file owns all `new` for cache / embedder / vector store (except the
-// *Factory helpers it delegates to).
 
 import "dotenv/config";
 import Fastify from "fastify";
@@ -24,11 +19,6 @@ import { loadConfig } from "./infrastructure/config.js";
 import { log } from "./infrastructure/logger.js";
 import { createProviderFromEnv, createProvidersFromEnv } from "./providers/factory.js";
 
-/** The built-in local embedder loads (first time: downloads) its ONNX model on
- * the first embed(). Warm it off the request path so the first semantic lookup
- * does not pay for that. The cached load promise survives the warmup timeout,
- * so even a download that outlives it keeps progressing; failures need no
- * handling — the lazy path simply retries on demand. */
 function warmEmbedder(embedder: EmbeddingProvider | undefined): void {
   if (embedder?.name !== "local") return;
   void embedder.embed("warmup", AbortSignal.timeout(60_000)).catch(() => undefined);
@@ -40,20 +30,14 @@ export function buildServer() {
   const provider = createProviderFromEnv(cfg);
   const providers = createProvidersFromEnv(cfg);
   const cache = createCacheFromEnv(cfg);
-  // Sync zero-setup path for tests/dev: memory store + configured embedder.
-  // pgvector needs async migration -> use buildServerAsync() in production.
   const semanticStore = cfg.semanticEnabled && cfg.semanticStore === "memory" ? new InMemoryVectorStore() : undefined;
   const embedder = cfg.semanticEnabled && semanticStore ? createEmbedderFromEnv(cfg) : undefined;
   warmEmbedder(embedder);
-  // T26: lane auth stores. Zero-setup path -> in-memory, gateway keys seeded
-  // from GATEWAY_API_KEYS; the pg backend needs async migration, so it is
-  // wired in buildServerAsync() via the auth factory.
   const auth = {
     apiKeys: new InMemoryApiKeyStore(cfg.gatewayApiKeys),
     credentials: new InMemoryCredentialStore(new CredentialCipher(cfg.credEncKey)),
   };
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
-  // T27: register is open; usage reuses the lane guard over the same stores.
   registerRegisterRoutes(app, auth);
   registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers);
@@ -80,7 +64,6 @@ export async function buildServerAsync() {
 }
 
 const isMain = process.argv[1]?.endsWith("server.ts") || process.argv[1]?.endsWith("server.js");
-// Do not auto-listen when imported by vitest (agent/implementation.md: tests must boot via buildServer + inject).
 if (isMain && !process.env.VITEST) {
   buildServerAsync().then(({ app, cfg, provider, cache, semanticStore }) => {
     app.listen({ port: cfg.port, host: "0.0.0.0" }, (err, address) => {

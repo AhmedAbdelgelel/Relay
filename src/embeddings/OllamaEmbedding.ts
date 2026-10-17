@@ -1,12 +1,9 @@
-// Local unlimited embedder (/api/embeddings).
-// Default nomic-embed-text (768-d, matches EMBEDDING_DIM). Use for
-// stampede/load tests to avoid burning Gemini quota.
 
 import { EMBEDDING_DIM, type EmbeddingProvider } from "./EmbeddingProvider.js";
 
 export interface OllamaEmbeddingOpts {
-  baseUrl?: string; // default "http://localhost:11434"
-  model?: string; // default "nomic-embed-text"
+  baseUrl?: string;
+  model?: string;
   timeoutMs?: number;
 }
 

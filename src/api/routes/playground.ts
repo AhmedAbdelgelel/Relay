@@ -12,8 +12,6 @@ const MIME: Record<string, string> = {
 
 async function serve(reply: FastifyReply, root: string, file: string): Promise<void> {
   const target = path.normalize(path.join(root, file));
-  // Path-boundary check: a plain startsWith(root) guard would also admit a
-  // sibling directory (…/public-evil/…); path.relative confines reads to root.
   const rel = path.relative(root, target);
   if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
     reply.status(403).send("forbidden");
@@ -29,9 +27,6 @@ async function serve(reply: FastifyReply, root: string, file: string): Promise<v
 }
 
 export function registerPlayground(app: FastifyInstance): void {
-  // "Connect via API" in the playground lets the browser point at any gateway
-  // host, which needs CORS on the API surface (and on the x-* headers the UI
-  // reads for its metrics card). Static assets stay same-origin only.
   const corsRoutes = new Set(["/health", "/metrics", "/providers", "/v1/chat/completions"]);
   app.addHook("onRequest", async (req, reply) => {
     if (!corsRoutes.has(req.url.split("?")[0])) return;

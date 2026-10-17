@@ -1,8 +1,3 @@
-// Anthropic Messages API adapter.
-// POST {base}/v1/messages with x-api-key + anthropic-version: 2023-06-01.
-// Body: {model, max_tokens, temperature, system?, messages}. Maps system role
-// out of messages. Response content blocks -> string. Usage
-// input_tokens/output_tokens -> prompt/completion.
 
 import type { ChatRequest, ChatResponse, TokenUsage } from "../domain/types.js";
 import { providerHttpError, toGatewayError } from "../infrastructure/errors.js";
@@ -63,10 +58,6 @@ function toAnthropicBody(req: ChatRequest, defaultModel: string): Record<string,
 
 export class AnthropicAdapter implements ProviderAdapter {
   readonly name: string;
-  // systemMessages=true means the adapter FOLDS system messages into the
-  // native `system` param (not a silent drop — conformance-tested). maxTokens
-  // stays true because the gateway contract allows an optional max_tokens;
-  // the implicit 1024 default is translation-table behavior.
   readonly capabilities: ProviderCapabilities = {
     chat: true,
     streaming: true,
@@ -168,8 +159,6 @@ export class AnthropicAdapter implements ProviderAdapter {
           } else if (kind === "message_delta") {
             const usage = readUsage(json.usage);
             if (usage) yield { delta: "", usage };
-          } else if (kind === "message_start") {
-            // No text yet; ignore.
           } else if (kind === "error") {
             throw providerHttpError(this.name, 502, JSON.stringify(json).slice(0, 300));
           }

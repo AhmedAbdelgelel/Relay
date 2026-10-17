@@ -1,9 +1,3 @@
-// Capability gate (pure, no I/O).
-// The HTTP layer calls this BEFORE dispatch: unsupported -> 400
-// unsupported_capability with no provider call (INV-1) and no cache touch.
-// Note the stream check comes first: streaming is a transport property, so a
-// stream:true request to a non-streaming adapter is rejected on
-// `streaming` alone (tools/json never factor in).
 
 import type { ChatRequest } from "../domain/types.js";
 import type { ProviderCapabilities } from "./ProviderAdapter.js";

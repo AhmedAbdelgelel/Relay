@@ -1,21 +1,3 @@
-// POST /v1/register (T27): open signup — validate, store the provider key
-// ENCRYPTED, issue a gateway key, return it exactly once.
-//
-// Flow (R2): zod body { name, provider: enum(PROVIDER_NAMES), provider_key }
-// -> 400 invalid_request on invalid input or an unknown provider; then
-// tenant_id = randomUUID(); credentials.save(tenant, provider, provider_key);
-// apiKeys.create({ tenant, provider, name }). Either store reporting
-// `unavailable` -> 503 auth_unavailable (the guard's vocabulary). A credential
-// orphaned by a failed key-create is acceptable: the tenant id was never
-// disclosed, so a retry simply mints a fresh tenant — and nothing can be
-// served until a gateway key exists.
-//
-// 201 body is EXACTLY { tenant_id, provider, key, key_prefix }: `key` is the
-// plaintext gateway key, shown once (the store keeps only its sha256), and
-// `key_prefix` is the record's display prefix. Key-material contract: the log
-// line carries { request_id, tenant_id, provider, key_prefix } and NEVER the
-// provider_key or the issued key; nothing here is counted as an auth
-// rejection (no identity was presented — R1).
 
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";

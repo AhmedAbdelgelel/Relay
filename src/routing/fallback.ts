@@ -1,6 +1,3 @@
-// routing/fallback.ts — ordered retry/failover chain + per-target breaker (T14).
-// Runs INSIDE the single-flight flight: coalescing is preserved, one chain per
-// shared miss. No HTTP here; the route supplies targets + the call function.
 
 import { GatewayError } from "../domain/types.js";
 import { toGatewayError } from "../infrastructure/errors.js";
@@ -25,7 +22,6 @@ export const DEFAULT_FALLBACK_POLICY: FallbackPolicy = {
   breakerCooldownMs: 30000,
 };
 
-/** Chain order: routed primary first, then the other configured adapters. */
 export function buildChain(primary: ProviderAdapter, all?: Map<string, ProviderAdapter>): FallbackTarget[] {
   const chain: FallbackTarget[] = [{ name: primary.name, adapter: primary }];
   if (!all) return chain;
@@ -37,7 +33,6 @@ export function buildChain(primary: ProviderAdapter, all?: Map<string, ProviderA
   return chain;
 }
 
-/** Full-jitter backoff for retry attempt n (0-based): uniform [0, base*2^n]. */
 export function backoffDelayMs(attempt: number, baseDelayMs: number, rand: () => number = Math.random): number {
   const cap = baseDelayMs * 2 ** attempt;
   return Math.floor(rand() * (cap + 1));
@@ -93,9 +88,6 @@ export class TargetBreaker {
     return was;
   }
 
-  /** Returns true only on a newly counted open (closed -> open). A failed
-   * half-open probe re-opens silently (returns false) so open-count gauges
-   * increment exactly once per open breaker. */
   recordFailure(name: string): boolean {
     if (this.halfOpen.has(name)) {
       this.halfOpen.delete(name);

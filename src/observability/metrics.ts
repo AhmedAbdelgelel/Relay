@@ -1,6 +1,3 @@
-// Minimal in-memory cache/provider metrics.
-// This singleton backs GET /metrics (JSON)
-// and the log lines. All methods are sync and never throw.
 
 export interface MetricsSnapshot {
   requests_total: number;
@@ -24,7 +21,6 @@ export interface MetricsSnapshot {
   semantic_hist_090_092: number;
   semantic_hist_092_095: number;
   semantic_hist_gte_095: number;
-  /** T27/R1: every auth rejection (guard 401/403/503, provider mismatch, usage anonymous). */
   auth_rejects_total: number;
   semantic_lookups: number;
   avg_semantic_score: number;
@@ -34,18 +30,9 @@ export interface MetricsSnapshot {
   provider_latency_ms_total: number;
   avg_provider_ms: number;
   hit_rate: number;
-  /** hits + coalesced followers that avoided a second provider call */
   provider_calls_avoided: number;
 }
 
-/**
- * Per-tenant slice for the REGISTERED lane (T26). Deliberately not part of
- * MetricsSnapshot: GET /metrics is public, so tenant usage is only readable
- * via tenantSnapshot(tenant) (T27's /v1/usage is the sanctioned reader).
- * Derived fields: `misses` = requests - exact_hits - semantic_hits (i.e. not
- * served by either cache); `provider_calls_avoided` = exact_hits +
- * semantic_hits + coalesced.
- */
 export interface TenantUsageSnapshot {
   tenant: string;
   requests: number;
@@ -156,7 +143,6 @@ export class GatewayMetrics {
   private providerLatencyTotal = 0;
   private semanticScoreTotal = 0;
   private semanticScored = 0;
-  /** tenant -> usage; registered lane only. Read via tenantSnapshot(). */
   private readonly tenants = new Map<string, TenantUsage>();
 
   inc(name: CounterName, by = 1): void {
@@ -193,9 +179,6 @@ export class GatewayMetrics {
     this.c.estimated_cost_saved += (tokens / 1000) * usdPer1kTokens;
   }
 
-  // --- T26 registered-lane per-tenant recording (anonymous lanes never call
-  // these). Same sites as the global counters; sync and never throw.
-
   observeTenantRequest(tenant: string): void {
     this.tenant(tenant).requests++;
   }
@@ -212,14 +195,12 @@ export class GatewayMetrics {
     this.tenant(tenant).coalesced++;
   }
 
-  /** Terminal-outcome latency (hit / semantic hit / served miss / stream done). */
   observeTenantLatency(tenant: string, ms: number): void {
     const t = this.tenant(tenant);
     t.latency_ms_total += Math.max(0, ms);
     t.latency_samples++;
   }
 
-  /** One tenant's slice only — never the whole tenant map. Unknown tenant = zeros. */
   tenantSnapshot(tenant: string): TenantUsageSnapshot {
     const t = this.tenants.get(tenant);
     const requests = t?.requests ?? 0;
@@ -281,7 +262,6 @@ export class GatewayMetrics {
   }
 }
 
-/** Process-wide singleton used by routes. Tests must call metrics.reset(). */
 export const metrics = new GatewayMetrics();
 
 export const __zeroSnapshotForTests = ZERO;

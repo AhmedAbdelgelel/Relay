@@ -1,6 +1,3 @@
-// Zero-setup ApiKeyStore: process memory only, seeded from GATEWAY_API_KEYS
-// (hashed at construction — the plaintext seed never sits in a row).
-// Same lookup semantics as the pg backend: verify = sha256(raw) -> row.
 
 import type { SeedApiKey } from "../infrastructure/config.js";
 import {

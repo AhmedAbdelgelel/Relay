@@ -1,13 +1,3 @@
-// Production similarity search on real pgvector.
-// SQL uses only standard pgvector surface: vector(n) type, <=> (cosine
-// distance), HNSW index with vector_cosine_ops. Verified by contract test on
-// the generated SQL + scripts/semantic-smoke.mjs against a live
-// pgvector-enabled Postgres (local PG here lacks the extension, ADR-005 in
-// agent/implementation.md Part B).
-//
-// Depends on a minimal SqlClient so tests inject a fake and prod passes a
-// node-postgres Pool. Table DDL is embedded below (migrateSemanticCache);
-// db/migrations/*.sql are the manual-apply records of the same migrations.
 
 import { Pool } from "pg";
 import { EMBEDDING_DIM } from "../embeddings/EmbeddingProvider.js";
@@ -52,7 +42,6 @@ export class PgVectorStore implements SemanticCacheStore {
     this.db = db;
   }
 
-  /** tenant+provider+model isolated, cosine similarity >= threshold, best first. */
   async findSimilar(
     embedding: number[],
     filter: SemanticFilter,
@@ -134,9 +123,7 @@ export class PgVectorStore implements SemanticCacheStore {
   async recordHit(id: string): Promise<void> {
     try {
       await this.db.query(`UPDATE semantic_cache SET hits = hits + 1 WHERE id = $1::uuid`, [id]);
-    } catch {
-      // Analytics only — never fail a request for a counter.
-    }
+    } catch { }
   }
 
   async ping(): Promise<boolean> {
@@ -153,7 +140,6 @@ export class PgVectorStore implements SemanticCacheStore {
   }
 }
 
-/** node-postgres Pool wrapped as SqlClient. Only place that imports `pg`. */
 export function createPgClient(connectionString: string): SqlClient {
   const pool = new Pool({ connectionString, max: 5, connectionTimeoutMillis: 3000 });
   pool.on("error", () => undefined);
@@ -189,9 +175,6 @@ const MIGRATION_TABLE = `CREATE TABLE IF NOT EXISTS semantic_cache (
   UNIQUE (tenant_id, provider, model, prompt_hash)
 )`;
 
-/** Bring a pgvector database to the expected shape. Throws a clear error when  * the `vector` extension is missing (fail fast at boot, ADR-005 in
- * agent/implementation.md Part B). The HNSW
- * index is best-effort: without it lookups still work via sequential scan. */
 export async function migrateSemanticCache(db: SqlClient): Promise<void> {
   try {
     await db.query(`CREATE EXTENSION IF NOT EXISTS vector`);

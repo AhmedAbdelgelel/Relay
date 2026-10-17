@@ -4,11 +4,9 @@ import type { CacheRepository } from "./CacheRepository.js";
 export interface RedisCacheOpts {
   url: string;
   commandTimeoutMs?: number;
-  /** Test seam: inject a compatible client instead of opening a connection. */
   client?: RedisCommands;
 }
 
-/** Minimal command surface RedisCache uses (the real client satisfies this). */
 export interface RedisCommands {
   readonly status: string;
   on(event: string, listener: () => void): unknown;
