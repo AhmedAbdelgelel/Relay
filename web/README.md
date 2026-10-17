@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Relay Control Plane — `web/`
 
-## Getting Started
+Next.js UI for the Relay LLM gateway: playground, live metrics, cache evidence,
+request inspector, and provider status — built with **Next.js 16 (App Router)**,
+**React 19**, **TypeScript**, and **Tailwind CSS v4**.
 
-First, run the development server:
+Design language follows the DeepSeek-style system extracted in
+[`../agent/ui-nextjs.md`](../agent/ui-nextjs.md): soft canvas, white surfaces with
+hairline borders, black pill primary buttons, one blue accent, system font stack
+(no webfonts), light + dark themes with a pre-paint script (no flash).
+
+## Quickstart
+
+The gateway must be running first (repo root: `npm run dev` → `http://localhost:3000`).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd web
+npm install
+npm run dev          # http://localhost:3001
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+All gateway traffic goes through a **same-origin proxy**: `/health`, `/metrics`,
+`/providers` (JSON), and `/v1/*` are rewritten to `GATEWAY_URL`
+(`next.config.ts`, default `http://localhost:3000`; see `.env.example`). No CORS
+setup needed, no keys in the client bundle.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Script | What |
+|---|---|
+| `npm run dev` | Dev server (Turbopack) |
+| `npm run build` / `start` | Production build / serve |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` / `test:watch` | Vitest + Testing Library suite |
 
-## Learn More
+## Architecture
 
-To learn more about Next.js, take a look at the following resources:
+```
+src/app/            routes: / (overview), /playground, /requests, /cache, /providers
+src/components/
+  shell/            sidebar, topbar, connection menu (gateway URL + API key)
+  ui/               Card, StatCard, Badge, Button, Table, EmptyState, Kbd, icons
+  playground/       request panel, thread, metrics card, trace, session panel
+  pages/            requests inspector, cache control room, providers status
+src/lib/
+  gateway.ts        typed browser client (chat + SSE streaming + evidence headers)
+  canonical.ts      payload builder + canonical JSON + sha256 (byte-parity tested
+                    against the gateway's real src/domain/normalize.ts)
+  store.tsx         app state: chats, session stats, connection, 30 s health/metrics poll
+  types.ts          gateway contract types
+src/test/           vitest setup + fetch/SSE stub helpers
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Honesty invariants carried over from the gateway: cache evidence
+(`x-cache`, `x-cache-hash`, lanes, similarity) is always shown, estimated tokens are
+marked `≈`, and the browser re-computes the canonical sha256 to verify what the
+gateway reports.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Testing
 
-## Deploy on Vercel
+```bash
+npm test             # 69 tests — canonical parity, SSE parsing, stats, components
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The suite is hermetic (no network, no real timers). Contract tests lock the exact
+cache-evidence copy so regressions surface as failing tests.
