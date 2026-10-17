@@ -68,4 +68,31 @@ describe("LocalEmbedding (built-in ONNX embedder, injected pipeline)", () => {
     await expect(e.embed("x", ctrl.signal)).rejects.toThrow(/aborted/);
     expect(stats.loads).toBe(0);
   });
+
+  it("a failed load is retried by the next embed (transient failure recovers)", async () => {
+    let attempts = 0;
+    const e = new LocalEmbedding({
+      loadPipeline: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error("transient: cannot find module 'onnxruntime-node'");
+        return async () => ({ data: UNIT, dims: [1, UNIT.length] });
+      },
+    });
+    await expect(e.embed("x", SIGNAL)).rejects.toThrow(/transient/);
+    expect(await e.embed("x", SIGNAL)).toEqual(UNIT); // second call retries the load
+    expect(attempts).toBe(2);
+  });
+
+  it("concurrent embeds share one load even when it fails", async () => {
+    let attempts = 0;
+    const e = new LocalEmbedding({
+      loadPipeline: async () => {
+        attempts++;
+        throw new Error("boom");
+      },
+    });
+    const settled = await Promise.allSettled([e.embed("x", SIGNAL), e.embed("y", SIGNAL)]);
+    expect(settled.map((s) => s.status)).toEqual(["rejected", "rejected"]);
+    expect(attempts).toBe(1); // one shared attempt, not one per caller
+  });
 });

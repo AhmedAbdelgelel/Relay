@@ -57,9 +57,14 @@ export class LocalEmbedding implements EmbeddingProvider {
     this.loadPipeline = opts.loadPipeline ?? loadOnnxPipeline;
   }
 
-  /** Load once and share the promise, so a burst of lookups triggers one load. */
+  /** Load once and share the promise, so a burst of lookups triggers one load.
+   * A failed load is not cached: the next embed retries it, so a transient
+   * disk/module hiccup cannot poison the embedder for the process lifetime. */
   private extractorOnce(): Promise<FeatureExtractor> {
-    this.extractor ??= this.loadPipeline(this.model);
+    this.extractor ??= this.loadPipeline(this.model).catch((err: unknown) => {
+      this.extractor = null;
+      throw err;
+    });
     return this.extractor;
   }
 

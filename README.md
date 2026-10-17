@@ -106,7 +106,7 @@ Every variable, with its default, is listed in [`.env.example`](.env.example). T
 
 ## Test report
 
-Full suite green at the last verified run (2026-10-16): **37 files passed, 4 skipped (41 total)** — **421 tests passed, 11 skipped, 0 failed (432 total)** — plus a clean `tsc` typecheck. The four skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`), the built-in embedder against the real ONNX model via `EMBEDDING_LIVE_TEST=1`, real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
+Full suite green at the last verified run (2026-10-17): **37 files passed, 4 skipped (41 total)** — **423 tests passed, 11 skipped, 0 failed (434 total)** — plus a clean `tsc` typecheck. The four skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`), the built-in embedder against the real ONNX model via `EMBEDDING_LIVE_TEST=1`, real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
 
 Measured performance (mock provider with 50 ms simulated latency):
 
@@ -158,7 +158,7 @@ Measured performance (mock provider with 50 ms simulated latency):
 | `tests/unit/pgvector-sql.test.ts` | 11 | SQL contract for pgvector |
 | `tests/unit/auth-config.test.ts` | 9 | Seed-key parsing + auth migration |
 | `tests/unit/embeddings.test.ts` | 5 | Embedder behavior + dimensions |
-| `tests/unit/local-embedding.test.ts` | 5 | Built-in embedder: lazy load, dim/NaN guards |
+| `tests/unit/local-embedding.test.ts` | 7 | Built-in embedder: lazy load, retry-on-failure, dim/NaN guards |
 | `tests/unit/normalize.test.ts` | 7 | Canonical key identity rules |
 | `tests/unit/singleflight.test.ts` | 5 | Coalescing incl. abort isolation |
 | `tests/unit/fallback.test.ts` | 31 | Fallback chain: jittered backoff, target breaker, error precedence |
