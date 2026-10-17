@@ -23,6 +23,14 @@ import type {
 
 export const CONNECTION_KEY = "llm-gateway-api-v1";
 
+/**
+ * Anonymous try-out lane (root README): without a key, the gateway accepts
+ * `x-provider-key: tryout` and answers on the anonymous lane — always BYPASS,
+ * never cached. Only sent when the connection has no key: a registered
+ * `lg_…` key takes lane precedence (Authorization > x-provider-key).
+ */
+const TRYOUT_HEADER = { "x-provider-key": "tryout" } as const;
+
 /** Parseable error from the gateway: `{ error: { code, message, request_id, retry_after? } }`. */
 export class GatewayError extends Error {
   readonly status: number;
@@ -230,6 +238,7 @@ export class GatewayClient {
       headers: this.headers({
         "Content-Type": "application/json",
         "x-request-id": init.requestId ?? newRequestId(),
+        ...(this.apiKey ? {} : TRYOUT_HEADER),
       }),
       body: JSON.stringify(body),
       signal: init.signal,
@@ -248,6 +257,7 @@ export class GatewayClient {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         "x-request-id": options.requestId ?? newRequestId(),
+        ...(this.apiKey ? {} : TRYOUT_HEADER),
       }),
       body: JSON.stringify({ ...body, stream: true }),
       signal: options.signal,

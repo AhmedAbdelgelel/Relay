@@ -59,6 +59,9 @@
   --scroll-thumb: rgba(0, 0, 0, 0.18);
   --scroll-thumb-hover: rgba(0, 0, 0, 0.3);
 
+  /* scrim behind the mobile navigation drawer */
+  --scrim: rgba(0, 0, 0, 0.4);
+
   /* type */
   --font-app-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
@@ -105,6 +108,9 @@
 
   --scroll-thumb: rgba(255, 255, 255, 0.16);
   --scroll-thumb-hover: rgba(255, 255, 255, 0.28);
+
+  /* scrim behind the mobile navigation drawer */
+  --scrim: rgba(0, 0, 0, 0.55);
 }
 
 /* No-JS / pre-script fallback: dark OS preference still gets a dark canvas.
@@ -151,6 +157,9 @@
 
     --scroll-thumb: rgba(255, 255, 255, 0.16);
     --scroll-thumb-hover: rgba(255, 255, 255, 0.28);
+
+    /* scrim behind the mobile navigation drawer */
+    --scrim: rgba(0, 0, 0, 0.55);
   }
 }
 
@@ -255,6 +264,11 @@
 /* Page enter: short fade/translate; neutralized by the reduced-motion rule. */
 @utility page-enter {
   animation: page-enter 160ms ease-out both;
+}
+
+/* Scrim behind the mobile navigation drawer. */
+@utility bg-scrim {
+  background-color: var(--scrim);
 }
 
 @keyframes page-enter {

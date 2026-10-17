@@ -266,6 +266,10 @@ export default function PlaygroundPage(): ReactNode {
     const streamed = payload.stream;
     const selectLabel = selectionLabel;
     const t0 = performance.now();
+    // A new run starts clean: the previous run's meta strip and header id
+    // chip must not sit next to this request while it is in flight (both the
+    // streaming and the JSON paths, and aborts, all pass through here).
+    setSummary(null);
     setTrace({ payload, summary: null, running: true });
     if (streamed) setPending({ chatId, who: selectLabel, model: payload.model });
 

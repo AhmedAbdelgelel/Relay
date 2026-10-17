@@ -3,7 +3,8 @@
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { THEME_KEY } from "@/lib/store";
-import { IconMoon, IconSun } from "@/components/ui/icons";
+import { IconMenu, IconMoon, IconSun } from "@/components/ui/icons";
+import { useMobileNav } from "./MobileNav";
 
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Overview",
@@ -69,9 +70,21 @@ function ThemeToggle() {
 export function Topbar() {
   const pathname = usePathname();
   const title = routeTitle(pathname);
+  const { open, show, close, triggerRef } = useMobileNav();
 
   return (
     <header className="sticky top-0 z-30 flex h-12 items-center gap-3 border-b border-line bg-translucent px-4 backdrop-blur-md">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={open ? "Close navigation" : "Open navigation"}
+        aria-expanded={open}
+        aria-controls="app-sidebar"
+        onClick={() => (open ? close() : show())}
+        className="grid size-8 shrink-0 place-items-center rounded-[8px] text-ink-2 transition-colors duration-150 hover:bg-wash hover:text-ink md:hidden"
+      >
+        <IconMenu size={16} />
+      </button>
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-[13px]">
         <span className="font-medium text-ink">relay</span>
         <span aria-hidden="true" className="text-ink-3">

@@ -74,6 +74,10 @@ export function ConnectionFields() {
           className={inputClasses}
         />
       </div>
+      <p className="col-span-2 text-[11px] leading-4 text-ink-3">
+        No key? Requests use the anonymous try-out lane — works out of the box, but always
+        bypasses the cache. Paste a registered lg_… key to unlock caching.
+      </p>
     </div>
   );
 }

@@ -120,10 +120,7 @@ describe("parseWaitSeconds (provider retry-wait parser)", () => {
     expect(parseWaitSeconds("quota exceeded")).toBeNull();
   });
 
-  // BUG(QA): parseWaitSeconds' docstring promises `"45s" → 45`, but a bare
-  // "45s" returns null (the m/s branch requires /retry/i and the other
-  // branches require an "h" segment). Un-skip once lib/format.ts handles it.
-  it.skip("parses a bare '45s' as 45 seconds", () => {
+  it("parses a bare '45s' as 45 seconds", () => {
     expect(parseWaitSeconds("45s")).toBe(45);
   });
 });

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AppProvider } from "@/lib/store";
+import { MobileNavProvider } from "@/components/shell/MobileNav";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { Topbar } from "@/components/shell/Topbar";
 
@@ -39,13 +40,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             Skip to content
           </a>
           <div className="flex min-h-dvh">
-            <Sidebar />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <Topbar />
-              <main id="main" tabIndex={-1} className="min-h-0 flex-1">
-                {children}
-              </main>
-            </div>
+            <MobileNavProvider>
+              <Sidebar />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <Topbar />
+                <main id="main" tabIndex={-1} className="min-h-0 flex-1">
+                  {children}
+                </main>
+              </div>
+            </MobileNavProvider>
           </div>
         </AppProvider>
       </body>

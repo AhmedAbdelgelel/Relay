@@ -108,6 +108,16 @@ export function IconMoon(props: IconProps) {
   );
 }
 
+export function IconMenu(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M4 6h16" />
+      <path d="M4 12h16" />
+      <path d="M4 18h16" />
+    </IconBase>
+  );
+}
+
 export function IconChevronDown(props: IconProps) {
   return (
     <IconBase {...props}>
