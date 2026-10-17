@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 /**
@@ -20,6 +21,11 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
+    // The repo root has its own package-lock.json (the gateway), so Next's
+    // lockfile detection would otherwise pick the root as the workspace root.
+    // Pin it to web/ so only this app is watched (silences the dual-lockfile
+    // warning and keeps the watcher narrow).
+    root: __dirname,
     rules: {
       "*.css": {
         loaders: ["@tailwindcss/turbopack"],
