@@ -43,7 +43,6 @@ function renderThread(chat: ChatRecord | null, onPick = vi.fn()) {
       fallbackLabel="Gemini"
       live={null}
       pending={null}
-      evidenceById={{}}
       regenerateId={null}
       retryId={null}
       onRegenerate={vi.fn()}
@@ -102,5 +101,35 @@ describe("Thread message rows", () => {
     const noticeText = screen.getByText("Empty response from the provider.");
     expect(noticeText).toHaveClass("text-warn");
     expect(noticeText.parentElement).toHaveClass("bg-warn-soft");
+  });
+
+  it("renders lane/key evidence persisted on the message (survives a reload)", () => {
+    const persisted: ChatRecord = {
+      ...FILLED_CHAT,
+      messages: [
+        FILLED_CHAT.messages[0],
+        {
+          ...FILLED_CHAT.messages[1],
+          evidence: {
+            requestId: "req-1",
+            lane: "registered",
+            keyId: "key-6027c011",
+            provider: "mock",
+            cache: "HIT",
+            cacheHash: "f25cf6bc",
+            latencyMs: 0,
+            coalesced: false,
+            semanticSimilarity: null,
+            fallback: null,
+          },
+        },
+      ],
+    };
+
+    renderThread(persisted);
+    fireEvent.click(screen.getByRole("button", { name: /cache HIT/ }));
+
+    expect(screen.getByText("registered")).toBeVisible();
+    expect(screen.getByText(/key key-6027c011 · coalesced false/)).toBeVisible();
   });
 });

@@ -200,6 +200,12 @@ export interface ChatMessage {
   kind: "normal" | "error" | "notice";
   text: string;
   meta?: MessageMeta;
+  /**
+   * Full reply evidence (lane, key id, coalescing, fallback, similarity).
+   * Stored on the message so it persists with the chat and the evidence card
+   * survives a reload — the page-local map alone lost these rows.
+   */
+  evidence?: Evidence;
 }
 
 export interface ChatRecord {

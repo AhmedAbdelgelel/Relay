@@ -171,7 +171,6 @@ export default function PlaygroundPage(): ReactNode {
   const [running, setRunning] = useState(false);
   const [pending, setPending] = useState<PendingState & { chatId: string } | null>(null);
   const [streaming, setStreaming] = useState<StreamingState | null>(null);
-  const [evidenceById, setEvidenceById] = useState<Record<string, Evidence>>({});
   const [lastRun, setLastRun] = useState<RunState | null>(null);
   const [retry, setRetry] = useState<RetryState | null>(null);
   const [summary, setSummary] = useState<RunSummary | null>(null);
@@ -234,10 +233,6 @@ export default function PlaygroundPage(): ReactNode {
   }, [activeChatId, messages.length, lastMessageText, liveChunks, pendingRow]);
 
   /* actions */
-
-  const remember = (messageId: string, evidence: Evidence) => {
-    setEvidenceById((prev) => ({ ...prev, [messageId]: evidence }));
-  };
 
   /**
    * Publish a completed run to both the response meta strip and the Request
@@ -381,7 +376,7 @@ export default function PlaygroundPage(): ReactNode {
           } else {
             updateMessage(chatId, messageId, { meta });
           }
-          remember(id, evidence);
+          updateMessage(chatId, id, { evidence });
           setLastRun({ messageId: id, payload });
           recordStats(evidence, null, null, {
             error: "aborted",
@@ -421,7 +416,7 @@ export default function PlaygroundPage(): ReactNode {
           } else {
             updateMessage(chatId, messageId, { kind: "notice", text: EMPTY_NOTICE, meta });
           }
-          remember(id, evidence);
+          updateMessage(chatId, id, { evidence });
           recordStats(
             evidence,
             usage
@@ -480,7 +475,7 @@ export default function PlaygroundPage(): ReactNode {
         } else {
           updateMessage(chatId, messageId, { text: res.text, meta });
         }
-        remember(id, evidence);
+        updateMessage(chatId, id, { evidence });
         setLastRun({ messageId: id, payload });
         recordStats(evidence, tokens, latencyMs, {
           ttftMs: ttftMs ?? undefined,
@@ -530,7 +525,7 @@ export default function PlaygroundPage(): ReactNode {
           requestId: evidence.requestId ?? sentId,
         });
         appendMessage(chatId, { id, role: "assistant", kind: "notice", text: EMPTY_NOTICE, meta });
-        remember(id, evidence);
+        updateMessage(chatId, id, { evidence });
         recordStats(
           evidence,
           usage
@@ -581,7 +576,7 @@ export default function PlaygroundPage(): ReactNode {
         requestId: evidence.requestId ?? sentId,
       });
       appendMessage(chatId, { id, role: "assistant", kind: "normal", text: reply, meta });
-      remember(id, evidence);
+      updateMessage(chatId, id, { evidence });
       setLastRun({ messageId: id, payload });
       recordStats(evidence, tokens, latencyMs, { error: null });
       setLastIO({
@@ -661,7 +656,7 @@ export default function PlaygroundPage(): ReactNode {
           meta,
         });
         if (quota) setRetry({ messageId: id, payload });
-        remember(id, evidence);
+        updateMessage(chatId, id, { evidence });
         recordStats(evidence, null, null, { error: error.message });
         setLastIO({
           payload,
@@ -791,7 +786,6 @@ export default function PlaygroundPage(): ReactNode {
                 fallbackLabel={selectionLabel}
                 live={live}
                 pending={pendingRow}
-                evidenceById={evidenceById}
                 regenerateId={regenerateId}
                 retryId={retryId}
                 onRegenerate={regenerate}

@@ -95,7 +95,7 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
 
 ## Verification (results)
 
-- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (69 passing), `npm run build`
+- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (70 passing), `npm run build`
   (all 9 routes prerendered) — green on the delivered tree.
 - Live browser pass over all five routes: try-out lane send with no key (BYPASS + hint copy),
   registered key MISS → HIT with the `llm:exact:v1:mock:…` key and the "browser sha256 matches
