@@ -1,21 +1,10 @@
-// Native Gemini embedContent REST (no SDK).
-// Model default text-embedding-004 (768-d, matches EMBEDDING_DIM).
-// Only place that speaks the :embedContent API.
 
 import { EMBEDDING_DIM, type EmbeddingProvider } from "./EmbeddingProvider.js";
 
 export interface GeminiEmbeddingOpts {
   apiKey: string;
-  /**
-   * Default "gemini-embedding-001": text-embedding-004 was RETIRED from the
-   * v1beta embedContent API (live-verified 2026-10-07: ListModels reports only
-   * gemini-embedding-001 / -2-preview / -2; text-embedding-004 -> 404).
-   * gemini-embedding-* answers with 3072-d (or 1536-d) vectors; the EMBEDDING_DIM
-   * = 768 prefix slice is the documented Matryoshka truncation, verified live:
-   * paraphrase pairs land ~0.96 cosine in the 768-d slice.
-   */
   model?: string;
-  baseUrl?: string; // default "https://generativelanguage.googleapis.com/v1beta"
+  baseUrl?: string;
   timeoutMs?: number;
 }
 
@@ -59,9 +48,6 @@ export class GeminiEmbedding implements EmbeddingProvider {
       if (values.length < EMBEDDING_DIM) {
         throw new Error(`gemini embed: dim ${values.length} < ${EMBEDDING_DIM}`);
       }
-      // Matryoshka: the first EMBEDDING_DIM coordinates are the trained 768-d
-      // truncation of the larger embedding. Slice + re-normalize so cosine
-      // comparisons stay in the unit-norm regime the stores assume.
       const sliced = (values as number[]).slice(0, EMBEDDING_DIM);
       const norm = Math.sqrt(sliced.reduce((a, x) => a + x * x, 0));
       if (norm === 0) throw new Error("gemini embed: zero-norm embedding");

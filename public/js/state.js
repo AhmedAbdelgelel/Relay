@@ -36,12 +36,6 @@ export function formatTokens(usage) {
   };
 }
 
-/**
- * Mirror of src/domain/normalize.ts (gateway side): trim model + content,
- * temperature default 1.0, max_tokens omitted when absent, stream excluded,
- * object keys sorted. The sha256 of this string must equal the gateway's
- * x-cache-hash — that equality is what the metrics card verifies (D3).
- */
 export function canonicalRequest(payload) {
   const normalized = {
     model: String(payload.model ?? "").trim(),
@@ -65,7 +59,6 @@ function sortDeep(value) {
   return value;
 }
 
-/** sha256 hex, or null when crypto.subtle is unavailable (insecure context). */
 export async function sha256Hex(text) {
   try {
     if (typeof crypto === "undefined" || !crypto.subtle) return null;
@@ -78,7 +71,6 @@ export async function sha256Hex(text) {
   }
 }
 
-/** Rough fallback when the provider reports no usage: ~4 chars per token. */
 export function estimateTokens(text) {
   const t = String(text || "");
   return t.trim() ? Math.max(1, Math.round(t.length / 4)) : 0;

@@ -1,4 +1,3 @@
-// CHOOSING: env -> embedder. Only place with `new`.
 
 import type { GatewayConfig } from "../infrastructure/config.js";
 import type { EmbeddingProvider } from "./EmbeddingProvider.js";
@@ -20,7 +19,6 @@ export function createEmbedderFromEnv(cfg: GatewayConfig): EmbeddingProvider {
         model: cfg.embeddingModel || undefined,
       });
     case "local":
-      // Built-in ONNX embeddings: no key, no server; loads on first embed only.
       return new LocalEmbedding({ model: cfg.embeddingModel || undefined });
     case "mock":
       return new MockEmbedding();

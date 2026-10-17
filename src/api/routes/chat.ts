@@ -1,5 +1,3 @@
-// HTTP only. No fetch, no provider SDK here (ISOLATION).
-// Responsibilities: validate (STANDARDIZATION), timeout+abort wiring, SSE framing, error mapping.
 
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
@@ -36,12 +34,6 @@ const BodySchema = z.object({
 });
 
 export interface ChatRouteDeps {
-  /**
-   * T24 auth stores (T26 wiring). Required — the lane guard verifies gateway
-   * keys against apiKeys, and the registered lane resolves its upstream key
-   * from credentials. Type-level required so every composition site fails
-   * loudly until it is wired (INV-9).
-   */
   auth: {
     apiKeys: ApiKeyStore;
     credentials: CredentialStore;
@@ -51,10 +43,6 @@ export interface ChatRouteDeps {
   providers?: Map<string, ProviderAdapter>;
 }
 
-// Quota hint: providers often say when to retry ("Please retry in 7h33m58s",
-// "retry in 12s", "retryDelay": "7s"). Surface it as error.retry_after so the
-// UI can show a human hint instead of making the user dig through the message.
-// Returns the raw duration token ("7h33m58s") or undefined when unparseable.
 export function parseRetryAfter(message: string): string | undefined {
   const m = message.match(/retry\s*(?:in|after)?\s*:?\s*((?:\d+\.?\d*\s*h\s*)?(?:\d+\.?\d*\s*m(?!s)\s*)?(?:\d+\.?\d*\s*s)?)/i);
   if (m && m[1] && /[\dhms]/i.test(m[1]) && /\d/.test(m[1])) {
@@ -67,16 +55,10 @@ export function parseRetryAfter(message: string): string | undefined {
 }
 
 export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapter, cfg: GatewayConfig, cache: CacheRepository | undefined, deps: ChatRouteDeps): void {
-  // One flight table per app instance (test isolation). Keyed by
-  // exact cacheKey, so different prompts/providers never coalesce.
   const flight = new SingleFlight<ChatResponse>();
   const breaker = new TargetBreaker();
-  // T26: the chat endpoint is lane-gated (T25). Registered = verified gateway
-  // key; anonymous = x-provider-key only; neither -> 401 before validation,
-  // provider selection or any cache/store work.
   const laneGuard = createLaneGuard(app, deps.auth.apiKeys);
 
-  // JSON snapshot for operators/tests.
   app.get("/metrics", async () => metrics.snapshot());
 
   app.post("/v1/chat/completions", { preHandler: laneGuard }, async (request, reply) => {
@@ -84,11 +66,8 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     const requestId = (request.headers["x-request-id"] as string) || randomUUID();
     reply.header("x-request-id", requestId);
 
-    // 0. LANE. The guard is registered on this route, so a non-null auth is
-    // structurally guaranteed by the time the handler runs.
     const auth = request.auth!;
 
-    // 1. STANDARDIZATION: validate before touching the provider (never pay for a bad request).
     const parsed = BodySchema.safeParse(request.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
@@ -102,38 +81,19 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       max_tokens: parsed.data.max_tokens,
       stream: parsed.data.stream,
     };
-    // T26 evidence headers: EVERY reply produced after successful validation
-    // carries the lane (and, registered-only, the key id). Set before routing
-    // so no later branch — mismatch, capability, hit/miss, error, SSE — can
-    // miss them. 400 invalid_request and guard rejections (401/403/503) never
-    // reach this point and carry no lane evidence.
     reply.header("x-lane", auth.lane);
     if (auth.lane === "registered") reply.header("x-key-id", auth.keyId);
-    // Tenant identity comes ONLY from the verified key (R7): x-tenant-id is
-    // ignored everywhere; anonymous lanes have no tenant.
     const registered = auth.lane === "registered";
     const tenant = registered ? auth.tenant : "";
-    // Per-model routing: when a providers map is present, the model prefix
-    // selects the adapter (gpt-* -> openai, claude-* -> anthropic, ...).
-    // Otherwise use the single injected provider (backward compatible).
     const active: ProviderAdapter = deps.providers ? providerForModel(req.model, deps.providers, provider) : provider;
 
-    // T26/R1: a registered key serves ONLY the provider it was issued for.
-    // Checked right after routing, before the capability gate, caches and any
-    // provider work (the T25 guard owns the error vocabulary).
     const mismatch = laneProviderMismatch(auth, active.name);
     if (mismatch) {
-      // T27/R1: a mismatch is an auth rejection like the guard's own 401/403/503.
       metrics.inc("auth_rejects_total");
       log({ request_id: requestId, provider: active.name, status: mismatch.status, error_code: mismatch.code });
       return reply.status(mismatch.status).send({ error: { code: mismatch.code, message: mismatch.message, request_id: requestId } });
     }
 
-    // T8 capability gate: consult the selected adapter's declared feature set
-    // BEFORE dispatch. An undeclared capability -> explicit 400, INV-1 holds
-    // (provider never called, cache never touched — this sits inside the
-    // validated branch, before lookups), and the failure is loud instead of a
-    // silent adapter degradation.
     const missing = missingCapabilities(req, active.capabilities);
     if (missing.length > 0) {
       const msg = `provider '${active.name}' does not support: ${missing.join(", ")}`;
@@ -141,36 +101,17 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       return reply.status(400).send({ error: { code: "unsupported_capability", message: msg, request_id: requestId } });
     }
 
-    // D3: hash the canonical request for EVERY validated request and echo it as
-    // x-cache-hash. This is the client's proof of why a call HIT or MISSED (and
-    // for stream:BYPASS, the key it *would* have used). sha256 of canonical JSON
-    // is cheap and opaque — the canonical body itself is never echoed.
-    // Exact cache key embeds the ACTIVE provider name, so routing automatically
-    // isolates cache entries + singleflight flights per provider.
     const { key: cacheKey, hash: cacheHash } = buildExactCacheKey(active.name, req);
     reply.header("x-cache-hash", cacheHash);
 
-    // 2. Timeout + client-abort share one AbortController.
-    // NOTE: never use `request.raw 'close'` here — Node emits it when the request
-    // body is fully read too, which aborted every upstream call at ~100ms (found live
-    // with Gemini). The response socket is the correct signal: `writableEnded` is
-    // false only if the client went away before we finished.
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), cfg.upstreamTimeoutMs);
     reply.raw.on("close", () => {
-      if (!reply.raw.writableEnded) ctrl.abort(); // real client disconnect -> cancel upstream
+      if (!reply.raw.writableEnded) ctrl.abort();
     });
-    let hijacked = false; // D2: did we take over the raw socket (stream path)?
+    let hijacked = false;
 
     try {
-      // T26 lane -> serving chain. Registered: resolve the tenant's stored
-      // credential for the routed provider — ok means this request runs on the
-      // tenant's own upstream key (per-request adapter, same .name); not_found
-      // keeps the configured adapter (zero-setup mock/keyless + dev fallback,
-      // T14 behavior preserved); a store outage logs and keeps the configured
-      // adapter too (never 5xx the chat). Anonymous: the routed target rebuilt
-      // from the header key ONLY — a single-target chain, so no env-keyed
-      // adapter can ever serve or be a fallback for a try-out request.
       let serving: ProviderAdapter = active;
       if (registered) {
         const cred = await deps.auth.credentials.get(auth.tenant, active.name);
@@ -180,21 +121,12 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         serving = providerWithKey(active.name, auth.providerKey, cfg);
       }
       const chain = registered ? buildChain(serving, deps.providers) : buildChain(serving);
-      // Fallback detection compares against the chain head (the routed primary
-      // target), not `active`: on the anonymous lane chain[0] is the rebuilt
-      // per-request adapter, and a credentialed registered lane has its own
-      // per-request chain head too.
       const primary = chain[0]!.adapter;
 
       if (!req.stream) {
         metrics.inc("requests_total");
         if (registered) metrics.observeTenantRequest(tenant);
-        // Anonymous lanes never consult a cache (R5): lookup/write/semantic/
-        // admission are all skipped, while the global counters keep counting.
         const useCache = registered && cfg.cacheEnabled && cache !== undefined;
-        // --- L1 exact lookup per chain target in order (serving-key isolation).
-        // A hit on any target's key is served under that target's identity, so a
-        // fallback answer admitted under its serving key is retrievable here.
         if (useCache) {
           for (const lt of chain) {
             if (!breaker.canUse(lt.name)) continue;
@@ -209,7 +141,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
                 if (typeof cached.content !== "string" || typeof cached.model !== "string") throw new Error("bad shape");
                 const latency = Date.now() - start;
                 metrics.inc("exact_hits");
-                // Registered-only block: per-tenant recording mirrors the globals.
                 metrics.observeTenantExactHit(tenant);
                 metrics.observeTenantLatency(tenant, latency);
                 if (cached.usage) {
@@ -243,12 +174,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
           }
           metrics.inc("exact_misses");
         }
-        // --- L2 semantic lookup (Exact MISS -> Semantic -> Policy).
-        // Non-stream only, like exact. Degrades to MISS on any failure, never 5xx.
-        // Modular monolith: api/ depends on ports only (SemanticCacheStore,
-        // EmbeddingProvider) + pure policy/isReusableSemantic. No SDK here.
-        // Registered + non-stream only: a try-out request must not read or
-        // write another tenant's semantic entries (R5/R7).
         const useSemantic = registered && cfg.semanticEnabled && deps.semanticStore !== undefined && deps.embedder !== undefined;
         let queryEmbedding: number[] | undefined;
         let queryText = "";
@@ -266,7 +191,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
               if (!decision.reusable) continue;
               const latency = Date.now() - start;
               metrics.inc("semantic_hits");
-              // Registered-only block: per-tenant recording mirrors the globals.
               metrics.observeTenantSemanticHit(tenant);
               metrics.observeTenantLatency(tenant, latency);
               metrics.observeSemanticScore(hit.similarity);
@@ -295,15 +219,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             queryEmbedding = undefined;
           }
         }
-        // Single-flight: N concurrent identical misses => 1 provider call.
-        // Flight key = exact cacheKey (provider-scoped), so it works even when the
-        // cache is DISABLED. Anonymous flights are scoped to a hash of the
-        // presented upstream key (R5): same-key try-outs may coalesce, but
-        // different keys and the registered lane never share upstream work, and
-        // the raw key never lands in the table. Upstream runs on its own
-        // AbortController: a single waiter disconnecting rejects only its own
-        // wait (awaitShared), never the shared work. No await between has() and
-        // run() => flag is exact.
         const flightKey = registered
           ? cacheKey
           : `${cacheKey}#anon#${createHash("sha256").update(auth.providerKey).digest("hex").slice(0, 16)}`;
@@ -329,9 +244,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             didFallback = chained.fallback;
             const raw = chained.result;
             metrics.observeProviderLatency(Date.now() - pt0);
-            // Response Processor: strip presentation markup
-            // BEFORE the caches see it, so an exact hit and a semantic hit both
-            // return the same clean text and stored blobs stay canonical.
             const out: ChatResponse = { ...raw, content: normalizeChatContent(raw.content) };
             const writeKey = chained.fallback ? buildExactCacheKey(serving.name, req).key : cacheKey;
             if (useCache && out.content.trim() !== "") {
@@ -346,9 +258,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
                 log({ request_id: requestId, provider: serving.name, cache: "write-failed", error: (err as Error)?.message ?? String(err) });
               });
             }
-            // --- Cache admission (semantic): store MISS responses for future reuse.
-            // Best-effort: reuse lookup embedding when available to avoid a 2nd
-            // embed call; failures never fail the request.
             if (useSemantic && typeof out.content === "string" && out.content.trim() !== "") {
               try {
                 let embedding = queryEmbedding;
@@ -392,8 +301,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         const latency = Date.now() - start;
         reply.header("x-provider", servingName);
         reply.header("x-latency-ms", String(latency));
-        // Anonymous lanes skip the cache entirely: report BYPASS, never a
-        // fabricated MISS.
         reply.header("x-cache", registered ? (useCache ? "MISS" : "DISABLED") : "BYPASS");
         reply.header("x-coalesced", wasCoalesced ? "true" : "false");
         if (didFallback) reply.header("x-fallback", "true");
@@ -408,14 +315,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         });
       }
 
-      // SSE path (D2): hijack so Fastify does not try to send its own response.
-      // Headers are written on the FIRST chunk instead of up front, because:
-      //  (a) x-latency-ms can then mean time-to-first-token, and
-      //  (b) an upstream failure before the first token (429/timeout — the
-      //      common case on the Gemini free tier) still returns a real JSON
-      //      error status instead of a silent empty 200 stream.
-      //      After hijack() Fastify sets reply.sent = true, so send() is
-      //      unusable — the catch branch writes the raw JSON itself.
       metrics.inc("requests_total");
       if (registered) metrics.observeTenantRequest(tenant);
       hijacked = true;
@@ -506,7 +405,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         if (streamError !== undefined || !attempted) {
           throw streamError ?? new GatewayError(502, "provider_error", "all targets unavailable (breakers open).", false);
         }
-        // Provider yielded nothing (empty stream): still owe the client a head.
         ttftMs = writeHead();
         headWritten = true;
       }
@@ -514,7 +412,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       if (tail) {
         safeWrite(`data: ${JSON.stringify({ id: streamId, model: req.model, choices: [{ delta: { content: tail } }] })}\n\n`);
       }
-      // D1: terminal usage frame, so streamed replies carry real token numbers.
       if (usage) {
         metrics.observeTokens(usage.prompt_tokens, usage.completion_tokens);
         safeWrite(`data: ${JSON.stringify({ id: streamId, model: req.model, choices: [], usage })}\n\n`);
@@ -539,14 +436,10 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       const gw = err instanceof GatewayError ? err : toGatewayError(active.name, err);
       log({ request_id: requestId, provider: active.name, status: gw.status, latency_ms: Date.now() - start, stream: req.stream, error_code: gw.code });
       if (reply.raw.headersSent) {
-        // Mid-stream failure: the client already got 200, so the only honest
-        // signal is closing the stream (the UI shows the partial text).
         try { reply.raw.end(); } catch { /* already closed */ }
         return reply;
       }
       if (hijacked) {
-        // D2: failed before the first token -> deliver the real status JSON on
-        // the raw socket (Fastify's send() is off-limits after hijack).
         const retryAfter = gw.status === 429 ? parseRetryAfter(gw.message) : undefined;
         const body = JSON.stringify({ error: { code: gw.code, message: gw.message, request_id: requestId, ...(retryAfter ? { retry_after: retryAfter } : {}) } });
         try {
@@ -580,8 +473,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     cache: cache?.name ?? "none",
     semantic: deps.semanticStore?.name ?? "none",
     embedder: deps.embedder?.name ?? "none",
-    // Cache tuning, read-only: lets the control plane show the real policy the
-    // gateway is running with instead of guessing. Contains no secrets.
     config: {
       cacheEnabled: cfg.cacheEnabled,
       cacheTtlSec: cfg.cacheTtlSec,
@@ -594,8 +485,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
   }));
 }
 
-// Waiter-side abort. Rejects only this waiter's wait; the shared
-// upstream promise keeps running for the remaining followers.
 function awaitShared<T>(shared: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
     return Promise.reject(

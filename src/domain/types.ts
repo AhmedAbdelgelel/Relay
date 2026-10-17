@@ -1,5 +1,3 @@
-// Pure types only. No I/O, no imports from api/providers/infra.
-// ISOLATION: nothing outside domain may leak provider-specific shapes in here.
 
 export type ChatRole = "system" | "user" | "assistant";
 
@@ -8,7 +6,6 @@ export interface ChatMessage {
   content: string;
 }
 
-/** Provider-reported token accounting. Same shape for chat() and chatStream(). */
 export interface TokenUsage {
   prompt_tokens: number;
   completion_tokens: number;
@@ -17,9 +14,9 @@ export interface TokenUsage {
 export interface ChatRequest {
   model: string;
   messages: ChatMessage[];
-  temperature: number; // default 1.0
+  temperature: number;
   max_tokens?: number;
-  stream: boolean; // default false
+  stream: boolean;
 }
 
 export interface ChatResponse {
@@ -29,7 +26,6 @@ export interface ChatResponse {
   usage?: TokenUsage;
 }
 
-/** Standardized error the HTTP layer understands. */
 export class GatewayError extends Error {
   status: number;
   code: string;

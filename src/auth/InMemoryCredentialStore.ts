@@ -1,6 +1,3 @@
-// Zero-setup CredentialStore: process memory only. Values are still encrypted
-// (same cipher as the pg backend) so the "rows never hold plaintext" contract
-// is backend-independent and there is no plaintext dev-only code path.
 
 import type {
   CredentialGetResult,
@@ -17,7 +14,6 @@ interface StoredCredential {
 
 export class InMemoryCredentialStore implements CredentialStore {
   readonly name = "memory";
-  // tenant -> provider -> encrypted row; plaintext is never stored.
   private readonly rows = new Map<string, Map<string, StoredCredential>>();
 
   constructor(private readonly cipher: CredentialCipher) {}
@@ -32,7 +28,6 @@ export class InMemoryCredentialStore implements CredentialStore {
   async get(tenant: string, provider: string): Promise<CredentialGetResult> {
     const row = this.rows.get(tenant)?.get(provider);
     if (!row) return { status: "not_found" };
-    // Integrity failure propagates on purpose (see CredentialStore doc).
     return { status: "ok", providerKey: this.cipher.decrypt(row.encKey) };
   }
 

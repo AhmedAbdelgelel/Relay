@@ -1,6 +1,3 @@
-// Brute-force cosine fallback.
-// Same interface as PgVectorStore; threshold/topK/tenant semantics identical.
-// No ANN index: O(n) scan, fine for dev/test. Production uses pgvector HNSW.
 
 import { EMBEDDING_DIM } from "../embeddings/EmbeddingProvider.js";
 import type {
@@ -85,9 +82,8 @@ export class InMemoryVectorStore implements SemanticCacheStore {
   }
 
   async save(entry: SemanticEntry): Promise<void> {
-    if (entry.embedding.length !== EMBEDDING_DIM) return; // fail silent, never poison
+    if (entry.embedding.length !== EMBEDDING_DIM) return;
     this.sweep();
-    // One row per exact prompt (dedupes re-saves of the same answer).
     this.rows = this.rows.filter(
       (r) =>
         !(
@@ -97,7 +93,7 @@ export class InMemoryVectorStore implements SemanticCacheStore {
           r.promptHash === entry.promptHash
         ),
     );
-    while (this.rows.length >= this.maxEntries) this.rows.shift(); // oldest first
+    while (this.rows.length >= this.maxEntries) this.rows.shift();
     this.rows.push({
       ...entry,
       usage: entry.usage ? { ...entry.usage } : undefined,

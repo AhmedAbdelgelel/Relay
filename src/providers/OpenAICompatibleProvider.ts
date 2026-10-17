@@ -1,6 +1,3 @@
-// STANDARDIZATION over the wire.
-// Gemini, Ollama, and OpenAI all speak POST {model,messages} -> {choices[0].message}.
-// Only baseURL/apiKey/model differ, so one class covers all three (see factory.ts).
 
 import type { ChatRequest, ChatResponse, TokenUsage } from "../domain/types.js";
 import { providerHttpError, toGatewayError } from "../infrastructure/errors.js";
@@ -8,8 +5,8 @@ import type { ProviderAdapter, ProviderCapabilities, StreamChunk } from "./Provi
 
 export interface OpenAICompatibleOpts {
   name: string;
-  baseURL: string; // no trailing slash, e.g. https://generativelanguage.googleapis.com/v1beta/openai
-  apiKey: string; // empty for Ollama
+  baseURL: string;
+  apiKey: string;
   defaultModel: string;
 }
 
@@ -28,7 +25,6 @@ function errorPayloadStatus(err: { code?: number | string; status?: string }): n
   return 502;
 }
 
-/** Missing/partial usage -> undefined so the caller can degrade to an estimate (never invent). */
 function readUsage(u?: { prompt_tokens?: number; completion_tokens?: number }): TokenUsage | undefined {
   if (!u) return undefined;
   if (typeof u.prompt_tokens !== "number" && typeof u.completion_tokens !== "number") return undefined;
@@ -101,8 +97,6 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
       max_tokens: req.max_tokens,
       stream: true,
     };
-    // D1: standard OpenAI flag asking for a terminal usage frame, so streamed
-    // replies carry real token numbers instead of a client-side guess.
     if (includeUsage) body["stream_options"] = { include_usage: true };
     return JSON.stringify(body);
   }
@@ -122,9 +116,6 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
       res = await this.fetchStream(req, signal, true);
       if (!res.ok) {
         const bodyText = await res.text();
-        // Some OpenAI-compatible backends reject stream_options outright
-        // (400). Retry once without it: a nicer metric is not worth failing
-        // the stream. If they still fail -> normal error mapping.
         const retryable = res.status === 400 && /stream_options/i.test(bodyText);
         if (retryable) {
           res = await this.fetchStream(req, signal, false);
@@ -166,8 +157,6 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
           if (json.error) throw providerHttpError(this.name, errorPayloadStatus(json.error), json.error.message ?? "provider error");
           const delta = json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content ?? "";
           const usage = readUsage(json.usage);
-          // Usage often arrives on a final `choices: []` frame; a frame can
-          // also carry both. Yield anything the client needs exactly once.
           if (delta || usage) yield { delta, ...(usage ? { usage } : {}) };
         }
       }

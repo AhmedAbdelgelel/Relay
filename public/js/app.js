@@ -20,7 +20,6 @@ const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 const CHATS_KEY = "llm-gateway-chats-v1";
-// Gateway connection comes from the "Connect via API" fields (localStorage).
 const API_KEY_KEY = "llm-gateway-api-v1";
 function loadApiConfig() {
   try { return JSON.parse(localStorage.getItem(API_KEY_KEY)) || {}; } catch { return {}; }
@@ -34,9 +33,6 @@ let chats = [];
 let activeId = null;
 let health = { ok: false, provider: null, cache: null };
 let metricsCache = null;
-// Live GET /metrics snapshot. Zeros are the honest cold-start value: the
-// pages below must never show invented traffic, so they read 0 until the
-// gateway has actually served requests.
 const EMPTY_METRICS = {
   requests_total: 0, exact_hits: 0, exact_misses: 0,
   singleflight_coalesced: 0, singleflight_leaders: 0,
@@ -60,9 +56,7 @@ async function refreshMetrics() {
   try {
     const r = await fetch((apiConfig.baseUrl || "") + "/metrics");
     if (r.ok) gatewayMetrics = { ...EMPTY_METRICS, ...(await r.json()) };
-  } catch {
-    /* offline-safe: keep the last known snapshot */
-  }
+  } catch { }
   return gatewayMetrics;
 }
 
@@ -72,10 +66,6 @@ const SUGGESTIONS = [
   "Why does stream:true bypass the cache?",
 ];
 
-// Session dashboard counters (D4). `estimated` marks totals that include a
-// ≈ client-side token estimate because the provider reported no usage.
-// semanticHits is separate from exact hits: a semantic hit saved a provider
-// call on an exact MISS, so it must never inflate the exact hit rate.
 const session = {
   requests: 0, hits: 0, misses: 0, bypassed: 0, disabled: 0, errors: 0,
   semanticHits: 0, semanticMisses: 0, semanticDisabled: 0,
@@ -88,8 +78,6 @@ function uid() {
   return "c-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-// Small ring of gateway events observed by this browser session (request ids,
-// cache verdicts, errors). Bounded so a long session cannot grow forever.
 const sessionEvents = [];
 function pushLog(level, message, requestId) {
   sessionEvents.push({
@@ -101,10 +89,6 @@ function pushLog(level, message, requestId) {
   if (sessionEvents.length > 200) sessionEvents.shift();
 }
 
-/* ── workspaces + theme ────────────────────────────────────────────── */
-// A workspace is a named gateway connection. The first is always this origin;
-// any URL typed in "Connect via API" is saved as a workspace so the switcher
-// can move the whole UI between gateways (metrics, providers, cache) at once.
 const WS_KEY = "llm-gateway-workspaces-v1";
 function loadWorkspaces() {
   const base = { id: "local", name: "dev-workspace", baseUrl: "" };
@@ -193,7 +177,6 @@ function bindThemeToggle() {
   });
 }
 
-/* ── health / metrics ─────────────────────────────────────────────── */
 function setStatus(online, text) {
   const dot = $("#statusDot");
   if (dot) { dot.classList.remove("on", "off"); dot.classList.add(online ? "on" : "off"); }
@@ -203,7 +186,6 @@ function setStatus(online, text) {
   if (tb) tb.textContent = online ? ("live · " + (health.provider || "gateway")) : "offline";
   const cache = $("#tbCache");
   if (cache) cache.textContent = "cache " + (health.cache || "—");
-  // The footer no longer prints a status sentence; the dot + workspace url carry it.
   const url = $("#wsUrl");
   if (url && health.ok) url.title = text || "";
 }
@@ -218,8 +200,6 @@ async function checkHealth() {
       semantic: h.semantic || "none",
       embedder: h.embedder || "none",
     };
-    // Cache tuning the gateway is actually running with. Read-only, no secrets:
-    // lets the Cache page show the real policy instead of guessing.
     gatewayConfig = h.config || null;
     setStatus(true, "Online · " + health.provider);
   } catch {
@@ -230,7 +210,6 @@ async function checkHealth() {
   metricsCache = gatewayMetrics;
 }
 
-/* ── chats ────────────────────────────────────────────────────────── */
 function loadChats() {
   try {
     const raw = localStorage.getItem(CHATS_KEY);
@@ -275,14 +254,12 @@ function renderStats() {
     : "No requests yet";
 }
 
-// cache: HIT | MISS | BYPASS | DISABLED | null (null = request failed before
-// the gateway could classify it, e.g. 429/504 -> counted as an error).
 function recordStats(cache, tokens, latencyMs, extra = {}) {
   session.requests++;
   if (extra.error) session.errors++;
   else if (cache === "HIT") {
     session.hits++;
-    if (tokens) session.reused += tokens.prompt + tokens.completion; // provider NOT called
+    if (tokens) session.reused += tokens.prompt + tokens.completion;
   } else if (cache === "MISS") session.misses++;
   else if (cache === "DISABLED") session.disabled++;
   else session.bypassed++;
@@ -359,7 +336,6 @@ function buildMetricsCard(m) {
   card.className = "metrics-card";
   card.hidden = true;
 
-  // 1. Cache verdict — the answer to "did this hit, and why".
   const cache = mrow("Cache");
   if (m.cache) {
     const badge = document.createElement("span");
@@ -373,7 +349,6 @@ function buildMetricsCard(m) {
   }
   card.appendChild(cache.row);
 
-  // 2. The exact Redis key (D3 evidence).
   const key = mrow("Cache key");
   if (m.hash) {
     const full = "llm:exact:v1:" + (m.provider || "unknown") + ":" + m.hash;
@@ -393,7 +368,6 @@ function buildMetricsCard(m) {
   }
   card.appendChild(key.row);
 
-  // 3. Canonical request + byte-for-byte verification against the gateway.
   const canon = mrow("Canonical");
   if (m.canonical) {
     const verify = document.createElement("span");
@@ -427,7 +401,6 @@ function buildMetricsCard(m) {
   }
   card.appendChild(canon.row);
 
-  // 4. Latency: what the browser measured vs what the gateway measured.
   const latency = mrow("Latency");
   latency.value.textContent = Math.round(m.latencyMs || 0) + " ms";
   if (m.gwMs !== null && m.gwMs !== undefined) {
@@ -435,7 +408,6 @@ function buildMetricsCard(m) {
   }
   card.appendChild(latency.row);
 
-  // 5. TTFT — streaming-only, first token on screen.
   if (m.streamed) {
     const ttft = mrow("TTFT");
     ttft.value.textContent = m.ttftMs ? Math.round(m.ttftMs) + " ms" : "—";
@@ -443,7 +415,6 @@ function buildMetricsCard(m) {
     card.appendChild(ttft.row);
   }
 
-  // 6. Token I/O — real (provider) or ≈ (browser estimate).
   const tokens = mrow("Tokens");
   if (m.tokens) {
     tokens.value.textContent = m.tokens.prompt + " in · " + m.tokens.completion + " out";
@@ -454,7 +425,6 @@ function buildMetricsCard(m) {
   }
   card.appendChild(tokens.row);
 
-  // 7. Generation speed.
   const rate = tokensPerSecond(m.tokens, m.latencyMs, m.ttftMs);
   if (rate !== null) {
     const speed = mrow("Speed");
@@ -463,7 +433,6 @@ function buildMetricsCard(m) {
     card.appendChild(speed.row);
   }
 
-  // 8. Streaming specifics.
   if (m.streamed) {
     const stream = mrow("Stream");
     stream.value.textContent = (m.chunks ?? 0) + " chunks · SSE";
@@ -471,12 +440,10 @@ function buildMetricsCard(m) {
     card.appendChild(stream.row);
   }
 
-  // 9. Who answered.
   const who = mrow("Provider");
   who.value.textContent = (m.provider || "—") + " · " + (m.model || "—");
   card.appendChild(who.row);
 
-  // 10. Correlation id — paste into the gateway JSON logs to find this request.
   const req = mrow("Request");
   if (m.requestId) {
     req.value.textContent = m.requestId;
@@ -605,10 +572,6 @@ function buildErrorRow(m) {
   return row;
 }
 
-// Providers phrase quota waits differently:
-//   "retry in 7h33m58.8s"  (Gemini free tier)
-//   "retry in 45s" / "retryDelay: 45s"  (OpenAI-style)
-// Normalize all of them into a short human string instead of raw seconds.
 function humanWait(totalSeconds) {
   if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return null;
   if (totalSeconds < 60) return Math.ceil(totalSeconds) + "s";
@@ -943,9 +906,6 @@ function refreshComposerHint() {
   if (hint && ta) hint.textContent = "≈ " + estimateTokens(ta.value).toLocaleString("en-US") + " tokens";
 }
 
-/* ── router ───────────────────────────────────────────────────────── */
-// Only pages backed by a real gateway surface: /metrics, /v1/chat/completions,
-// /providers. Everything else was fiction and is gone on purpose.
 const ROUTES = ["overview", "playground", "providers", "cache", "requests"];
 const ROUTE_TITLES = { overview: "Overview", playground: "Playground", providers: "Providers", cache: "Cache", requests: "Requests" };
 
@@ -973,9 +933,6 @@ function render() {
   renderStats();
 }
 
-/* -- overview ---------------------------------------------------------- */
-// Every figure is read from GET /metrics or measured in this browser session.
-// No fabricated traffic: a cold gateway honestly reports zeros.
 function overviewCards() {
   const m = gatewayMetrics;
   const s = session;
@@ -1056,8 +1013,6 @@ function mountOverview() {
   });
 }
 
-/* -- cache ------------------------------------------------------------ */
-// Live from GET /metrics. Zeroes before any traffic, never demo numbers.
 function cacheCards() {
   const m = gatewayMetrics;
   const decided = m.exact_hits + m.exact_misses;
@@ -1123,7 +1078,6 @@ function mountCache() {
 }
 
 function mountRequests() {
-  // The inspector reads session.lastIO, which the playground keeps current.
   refreshMetrics().then(() => {
     if (currentRoute() !== "requests") return;
     const el = $("#reqCacheVerdict");
@@ -1131,7 +1085,6 @@ function mountRequests() {
   });
 }
 
-/* ── shared bits ──────────────────────────────────────────────────── */
 function pillFor(status) {
   const s = String(status || "").toLowerCase();
   const cls = s.includes("run") ? "running" : s.includes("complet") || s === "pass" || s === "connected" ? "completed" : s.includes("fail") ? "failed" : s.includes("cancel") ? "cancelled" : s.includes("miss") ? "miss" : s.includes("hit") ? "hit" : "idle";
@@ -1141,10 +1094,6 @@ function costFor(model, prompt, completion) {
   return formatCost(estimateCost(model, { prompt, completion }));
 }
 
-/* ── overview ─────────────────────────────────────────────────────── */
-
-
-/* ── playground ───────────────────────────────────────────────────── */
 function viewPlayground() {
   return '<div class="page" data-page="playground">' +
     '<div class="page-head"><div><h1>Playground</h1><p class="sub">Send real requests through the gateway · POST /v1/chat/completions</p></div>' +
@@ -1328,11 +1277,7 @@ function mountPlayground() {
   if (session.lastIO && session.lastIO.meta) updateTraceDone(session.lastIO.payload, session.lastIO.meta);
 }
 
-/* ── providers ────────────────────────────────────────────────────── */
 function providerFallbackCards() {
-  // Shown only while GET /providers is unreachable. Inventing latency and
-  // request counts here would make the page lie, so every card reads
-  // "unknown (offline)" instead of a confident-looking demo number.
   return Object.entries(PROVIDERS).map(([key, p]) =>
     '<div class="prov-card"><h3><span class="dot" style="color:var(--dim);background:currentColor"></span>' + esc(p.label) +
       '<span style="margin-left:auto">' + pillFor("Unknown") + "</span></h3>" +
@@ -1360,8 +1305,6 @@ function liveProviderCards(list) {
   }).join("");
 }
 function mountProviders() {
-  // Live status from GET /providers (real configured flags, never key values).
-  // Fallback: keep the static cards rendered by viewProviders().
   try {
     const run = async () => {
       const res = await fetch((apiConfig.baseUrl || "") + "/providers");
@@ -1381,13 +1324,9 @@ function mountProviders() {
       const live = $("#provLive");
       if (live) live.textContent = "offline · showing static catalog";
     });
-  } catch {
-    /* offline-safe: static fallback stays */
-  }
+  } catch { }
 }
 
-
-/* ── requests ─────────────────────────────────────────────────────── */
 function viewRequests() {
   const io = session.lastIO;
   const empty = "No live request yet — send one from the Playground to inspect the real pipeline.";
@@ -1404,12 +1343,6 @@ function viewRequests() {
     '<div class="grid-2">' + panel("Incoming Request", incoming) + panel("Canonical Request", canon) + panel("Provider Request", prov) + panel("Provider Response", provRes) + panel("Canonical Response", canonRes) + panel("Final Response", fin) + "</div></div>";
 }
 
-
-
-
-
-
-/* ── boot ─────────────────────────────────────────────────────────── */
 function init() {
   loadChats();
   if (!chats.length) {

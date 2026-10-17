@@ -8,8 +8,8 @@ async function readSSE(response, onToken, signal) {
   const decoder = new TextDecoder();
   let buffer = "";
   let text = "";
-  let usage = null;   // terminal usage frame (D1) — null when the provider omitted it
-  let chunks = 0;     // content deltas seen, a streaming metric of its own
+  let usage = null;
+  let chunks = 0;
   for (;;) {
     if (signal && signal.aborted) {
       await reader.cancel().catch(() => undefined);

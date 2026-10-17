@@ -1,11 +1,4 @@
-// STANDARDIZATION of all env parsing in one place.
-// Nothing else reads process.env directly.
 
-/**
- * Single source of truth for the provider names (T27/R4): the `PROVIDER` env
- * check, `GATEWAY_API_KEYS` seeds, and the register route's zod enum all read
- * this one list — add a provider here and every consumer follows.
- */
 export const PROVIDER_NAMES = ["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"] as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
@@ -141,9 +134,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     anthropicApiKey: str(env, "ANTHROPIC_API_KEY"),
     anthropicBaseUrl: str(env, "ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
     anthropicModel: str(env, "ANTHROPIC_MODEL", "claude-4"),
-    // OPEN_ROUTER_KEY is the variable name in the project .env. :free models
-    // are $0 but still need a free OpenRouter account key; without one the
-    // upstream returns a clean 401 (no boot-time demand).
     openRouterKey: str(env, "OPEN_ROUTER_KEY"),
     openRouterBaseUrl: str(env, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
     openRouterModel: str(env, "OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),

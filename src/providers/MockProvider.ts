@@ -1,5 +1,3 @@
-// Deterministic fake for tests + zero-setup dev.
-// Supports delay + failure injection so timeout/abort paths are testable without a real LLM.
 
 import type { ChatResponse } from "../domain/types.js";
 import type { ChatRequest } from "../domain/types.js";
@@ -16,8 +14,6 @@ export class MockProvider implements ProviderAdapter {
     tools: false,
     json: false,
     systemMessages: true,
-    // Accepts-and-ignores: the playground UI sends max_tokens by default;
-    // declaring false would 400 it. The declaration is ACCEPTANCE, not usage.
     maxTokens: true,
   };
   private delayMs: number;
@@ -71,12 +67,10 @@ export class MockProvider implements ProviderAdapter {
   async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
     await this.wait(signal);
     this.maybeFail();
-    // Yield 3 chunks so SSE framing + client-abort mid-stream are testable.
     for (const chunk of ["mock ", "stream ", `(${req.model})`]) {
       if (signal.aborted) throw new GatewayError(504, "gateway_timeout", "mock stream aborted.", true);
       yield { delta: chunk };
     }
-    // Terminal usage-only frame, exactly like OpenAI with stream_options.include_usage.
     yield { delta: "", usage: { prompt_tokens: 10, completion_tokens: 5 } };
   }
 }

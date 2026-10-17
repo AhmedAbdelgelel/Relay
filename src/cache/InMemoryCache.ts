@@ -1,8 +1,5 @@
 import type { CacheRepository } from "./CacheRepository.js";
 
-// Bounded LRU. Redis handles eviction server-side (maxmemory-policy);
-// the in-memory fallback must not grow unbounded in long-running dev/test.
-// Default 1000 entries; oldest-inserted evicted first, hits refresh recency.
 export class InMemoryCache implements CacheRepository {
   readonly name = "memory";
   private store = new Map<string, { value: string; expiresAt: number }>();
@@ -24,7 +21,6 @@ export class InMemoryCache implements CacheRepository {
       this.store.delete(key);
       return null;
     }
-    // Refresh LRU recency without extending TTL.
     this.store.delete(key);
     this.store.set(key, e);
     return e.value;
@@ -38,7 +34,7 @@ export class InMemoryCache implements CacheRepository {
         this.store.delete(oldest.value);
       }
     } else {
-      this.store.delete(key); // re-insert for recency
+      this.store.delete(key);
     }
     this.store.set(key, { value, expiresAt: Date.now() + Math.max(1, ttlSeconds) * 1000 });
   }

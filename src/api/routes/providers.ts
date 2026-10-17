@@ -1,5 +1,3 @@
-// HTTP only. Live provider status, never key values.
-// Modular monolith: api owns HTTP; choosing lives in factory/server.
 
 import type { FastifyInstance } from "fastify";
 import type { GatewayConfig } from "../../infrastructure/config.js";
@@ -37,8 +35,6 @@ export function buildProviderStatus(cfg: GatewayConfig, providers: Map<string, P
     label: LABELS[d.id] ?? d.id,
     endpoint: d.endpoint,
     models: d.models,
-    // configured = key present (or no key needed). Also require the adapter to
-    // exist in the map so status always reflects what routing can actually use.
     configured: d.configured && providers.has(d.id),
     active: cfg.provider === d.id,
   }));

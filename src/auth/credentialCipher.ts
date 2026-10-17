@@ -1,11 +1,3 @@
-// AES-256-GCM for provider credentials (T24). 32-byte key = sha256(secret);
-// fresh 12-byte IV per write; stored as versioned base64url of iv||tag||ct.
-// Decrypt throws a clear error on wrong key, tampering, or bad encoding.
-//
-// The empty secret is a valid dev-only key: zero-setup runs use an in-memory
-// credential store, so the value only needs the contract that rows never hold
-// plaintext. DATABASE_URL deployments require CRED_ENC_KEY (enforced in
-// src/infrastructure/config.ts).
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
@@ -45,7 +37,6 @@ export class CredentialCipher {
       decipher.setAuthTag(tag);
       return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
     } catch {
-      // GCM authentication failure — wrong key or tampered data.
       throw new Error("credential decrypt failed: wrong key or tampered data");
     }
   }

@@ -1,9 +1,3 @@
-// CHOOSING for the auth layer: only place with `new` on auth stores.
-// memory = zero-setup fallback (dev/tests; gateway keys seeded from
-// GATEWAY_API_KEYS, hashed at construction); pg = production (DATABASE_URL
-// set; auth tables migrated at boot, sharing one SqlClient).
-// Composed by src/server.ts: buildServer() (dev/tests) constructs the in-memory
-// stores directly; buildServerAsync() (boot path) picks memory/pg via this factory.
 
 import { createPgClient } from "../cache/PgVectorStore.js";
 import type { GatewayConfig } from "../infrastructure/config.js";
