@@ -36,7 +36,6 @@ interface ThreadProps {
   fallbackLabel: string;
   live: LiveState | null;
   pending: PendingState | null;
-  evidenceById: Record<string, Evidence>;
   regenerateId: string | null;
   retryId: string | null;
   onRegenerate: () => void;
@@ -300,7 +299,6 @@ export function Thread({
   fallbackLabel,
   live,
   pending,
-  evidenceById,
   regenerateId,
   retryId,
   onRegenerate,
@@ -337,7 +335,7 @@ export function Thread({
               key={message.id}
               message={message}
               fallbackLabel={fallbackLabel}
-              evidence={evidenceById[message.id]}
+              evidence={message.evidence}
               canRegenerate={regenerateId === message.id}
               onRegenerate={onRegenerate}
             />
@@ -348,7 +346,7 @@ export function Thread({
             key={message.id}
             message={message}
             fallbackLabel={fallbackLabel}
-            evidence={evidenceById[message.id]}
+            evidence={message.evidence}
             isLive={live !== null && live.messageId === message.id}
             live={live}
             canRegenerate={regenerateId === message.id}
