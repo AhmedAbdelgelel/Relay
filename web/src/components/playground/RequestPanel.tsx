@@ -63,6 +63,8 @@ export function RequestPanel({
   );
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // An Enter that confirms an IME composition (CJK input) must never send.
+    if (event.nativeEvent.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       onSendOrStop();

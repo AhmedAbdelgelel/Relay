@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import { useAppStore } from "@/lib/store";
 import {
@@ -30,7 +30,14 @@ function isActive(pathname: string, href: string): boolean {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { chats, activeChatId, newChat, selectChat, deleteChat } = useAppStore();
+
+  /** Legacy #newChatBtn: start a chat and land on the playground to use it. */
+  const startNewChat = () => {
+    newChat();
+    if (pathname !== "/playground") router.push("/playground");
+  };
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-line bg-canvas px-3 py-3 md:flex">
@@ -71,7 +78,7 @@ export function Sidebar() {
 
       <button
         type="button"
-        onClick={() => newChat()}
+        onClick={startNewChat}
         className="mt-4 flex h-8 w-full items-center justify-center gap-1.5 rounded-control border border-line text-[13px] text-ink-2 transition-colors duration-150 hover:bg-wash hover:text-ink"
       >
         <IconPlus size={14} />

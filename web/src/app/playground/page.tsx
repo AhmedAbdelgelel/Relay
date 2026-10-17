@@ -239,6 +239,16 @@ export default function PlaygroundPage(): ReactNode {
     setEvidenceById((prev) => ({ ...prev, [messageId]: evidence }));
   };
 
+  /**
+   * Publish a completed run to both the response meta strip and the Request
+   * Trace panel. Without this the trace's `summary` stays null forever and
+   * every trace step renders "pending" even after the reply lands.
+   */
+  const publish = (next: RunSummary): void => {
+    setSummary(next);
+    setTrace((prev) => (prev ? { ...prev, summary: next } : prev));
+  };
+
   const abort = () => {
     aborterRef.current?.abort();
   };
@@ -424,7 +434,7 @@ export default function PlaygroundPage(): ReactNode {
             text: res.text,
             mode: "stream",
           });
-          setSummary(
+          publish(
             buildSummary({
               evidence,
               latencyMs,
@@ -480,7 +490,7 @@ export default function PlaygroundPage(): ReactNode {
           text: res.text,
           mode: "stream",
         });
-        setSummary(
+        publish(
           buildSummary({
             evidence,
             latencyMs,
@@ -533,7 +543,7 @@ export default function PlaygroundPage(): ReactNode {
           text: reply,
           mode: "json",
         });
-        setSummary(
+        publish(
           buildSummary({
             evidence,
             latencyMs,
@@ -578,7 +588,7 @@ export default function PlaygroundPage(): ReactNode {
         text: reply,
         mode: "json",
       });
-      setSummary(
+      publish(
         buildSummary({
           evidence,
           latencyMs,
