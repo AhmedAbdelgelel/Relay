@@ -77,6 +77,10 @@ export function parseWaitSeconds(raw: string): number | null {
   if (secs) return parseFloat(secs[1]);
   const delay = raw.match(/retryDelay"?\s*:?\s*"?(\d+)/i);
   if (delay) return Number(delay[1]);
+  // Bare seconds ("45s"): no h/m segment, no retry wording required. The
+  // boundary keeps "12m30s" null (its seconds follow a minutes part).
+  const bare = raw.match(/(?:^|[^\w.])([\d.]+)\s*s(?![\w])/i);
+  if (bare) return parseFloat(bare[1]);
   return null;
 }
 

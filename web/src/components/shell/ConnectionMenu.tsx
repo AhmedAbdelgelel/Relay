@@ -117,6 +117,10 @@ export function ConnectionMenu() {
               spellCheck={false}
               className={inputClasses}
             />
+            <p className="mb-3 text-[11px] leading-4 text-ink-3">
+              No key? Requests use the anonymous try-out lane — works out of the box, but always
+              bypasses the cache. Paste a registered lg_… key to unlock caching.
+            </p>
             <div className="flex items-center justify-between gap-2">
               <Button type="submit" variant="primary" size="sm">
                 Apply

@@ -8,7 +8,7 @@
  * so a live /providers catalog never blocks a manually typed model.
  */
 
-import type { CacheVerdict } from "@/lib/types";
+import type { CacheVerdict, Lane } from "@/lib/types";
 
 export interface ProviderInfo {
   label: string;
@@ -111,9 +111,20 @@ const CACHE_HINT: Record<CacheVerdict, string> = {
   DISABLED: "Cache turned off on this gateway (CACHE_ENABLED=0) — every request reaches the provider.",
 };
 
-/** Human hint for every verdict; SEMANTIC_HIT cites the measured similarity. */
-export function cacheHint(verdict: CacheVerdict | null, similarity?: number | null): string {
+/**
+ * Human hint for every verdict; SEMANTIC_HIT cites the measured similarity.
+ * An anonymous-lane BYPASS gets its own hint: the try-out lane never caches,
+ * regardless of the stream flag (the stream hint stays for registered keys).
+ */
+export function cacheHint(
+  verdict: CacheVerdict | null,
+  similarity?: number | null,
+  lane?: Lane | null,
+): string {
   if (!verdict) return "not classified (request failed)";
+  if (verdict === "BYPASS" && lane === "anonymous") {
+    return "anonymous try-out lane — always bypasses the cache; paste a registered lg_… key to enable caching.";
+  }
   if (verdict === "SEMANTIC_HIT") {
     const s =
       typeof similarity === "number" && Number.isFinite(similarity)

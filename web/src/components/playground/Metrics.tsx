@@ -216,7 +216,7 @@ export function MetricsCard({
         {meta.verdict ? (
           <>
             <Badge tone={verdictTone(meta.verdict)}>{meta.verdict}</Badge>
-            <Sub>{cacheHint(meta.verdict, evidence?.semanticSimilarity)}</Sub>
+            <Sub>{cacheHint(meta.verdict, evidence?.semanticSimilarity, evidence?.lane)}</Sub>
           </>
         ) : (
           <span className="text-ink-3">not classified (request failed)</span>
