@@ -1,6 +1,6 @@
 # Relay UI — Next.js Control Plane (redesign plan)
 
-Status: **in progress** · Owner: frontend · Reference design: **DeepSeek Harness (dsh) web UI**
+Status: **complete** · Owner: frontend · Reference design: **DeepSeek Harness (dsh) web UI**
 
 ## Goal
 
@@ -79,20 +79,30 @@ Dark theme (from the dsh dark hero): canvas `#0a0a0a`, surfaces
 `rgba(255,255,255,.04–.08)`, hairline `0 0 0 .5px rgba(255,255,255,.08) inset`,
 text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, black text).
 
-## Commit plan (each commit pushed to `origin/main`)
+## Delivered (every commit pushed to `origin/main`)
 
-1. `docs(plan)` — this document.
-2. `chore(web)` — scaffold Next.js app, proxy config, quality gates.
-3. `feat(web): design system + app shell` — tokens, theme, sidebar, topbar, Overview page.
-4. `feat(web): playground` — streaming chat, lanes, cache-evidence rendering, session stats.
-5. `feat(web): requests + cache + providers pages`.
-6. `test(web)` — unit/component tests for the new app.
-7. `fix(web)` — issues found by the QA pass (browser, a11y, performance).
-8. `docs` — README section for the new control plane.
+1. `91563f1` — `docs(plan)`: this document.
+2. `af001cf` + `8b48a5e` — scaffold (Next.js 16.4.2, same-origin proxy rewrites) + design
+   system, app shell, Overview.
+3. `e9b9fcb` — playground: streaming chat, cache-evidence card, session stats.
+4. `3e35a8d` — requests inspector, cache control room, providers status.
+5. `8a6c1ac` — vitest + Testing Library suite: canonical sha256 parity against the gateway's
+   real `src/domain/normalize.ts`, SSE parser, stats classification, component contracts.
+6. `41417cb` + `547a7b0` — QA rounds 1+2: trace completion after a run, IME-safe Enter,
+   New chat routing, anonymous try-out lane for zero-setup sends, stale-strip reset,
+   mobile nav drawer, bare-seconds wait parser.
+7. `29ccd5b` + `b62f449` — build hygiene: Turbopack root pinned to `web/`, unused import dropped.
 
-## Verification
+## Verification (results)
 
-- `web/`: `npm run lint`, `npm run build`, component tests (vitest + Testing Library).
-- QA pass with a dedicated subagent: live browser walk-through, console/network checks,
-  Lighthouse, accessibility audit, then fixes.
-- Root suite (`npm test`, `npm run typecheck`) must stay green — legacy UI untouched.
+- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (69 passing), `npm run build`
+  (all 9 routes prerendered) — green on the delivered tree.
+- Live browser pass over all five routes: try-out lane send with no key (BYPASS + hint copy),
+  registered key MISS → HIT with the `llm:exact:v1:mock:…` key and the "browser sha256 matches
+  x-cache-hash" chip, cache page numbers equal `/metrics` (33.33% = 3 hit / 6 miss), providers
+  line equals the raw `/providers` payload (3/6 configured, mock active default), theme flip
+  instant + persisted across reload, error rows carry request id + status.
+- QA findings and their fixes are tracked in the two `fix(web)` commits above. The mobile
+  drawer at ≤767px is verified via jsdom behavior tests + generated-CSS inspection; the
+  harness desktop could not emulate a narrow viewport, so pixel review remains manual.
+- The legacy UI (`public/`) and its root test contracts are untouched.
