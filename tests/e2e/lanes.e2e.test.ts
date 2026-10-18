@@ -7,6 +7,7 @@ import { InMemoryApiKeyStore } from "../../src/auth/InMemoryApiKeyStore.js";
 import { InMemoryCredentialStore } from "../../src/auth/InMemoryCredentialStore.js";
 import type { CacheRepository } from "../../src/cache/CacheRepository.js";
 import { InMemoryCache } from "../../src/cache/InMemoryCache.js";
+import { GatewayError } from "../../src/domain/types.js";
 import { metrics } from "../../src/observability/metrics.js";
 import { MockProvider } from "../../src/providers/MockProvider.js";
 import { laneAuth } from "../helpers/lane.js";
@@ -155,6 +156,35 @@ describe("lane guard", () => {
         expect(metrics.snapshot().provider_requests).toBe(2);
     expect(verified).toBe(false);
     expect(sets).toEqual([]);
+    await app.close();
+  });
+
+  it("anonymous BYPASS neither reads nor seeds the registered lane's exact entry", async () => {
+    const lanes = await laneAuth("mock");
+    const provider = new ScriptedProvider("mock");
+    const { app } = makeApp({ auth: lanes.auth, provider });
+    const lane = lanes.laneFor("mock");
+
+    const seed = await chat(app, lane.key, VALID);
+    expect(seed.headers["x-cache"]).toBe("MISS");
+    expect(seed.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content).toBe("scripted(mock): hello lane");
+
+    const anon = await chat(app, null, VALID, { "x-provider-key": "sk-anon" });
+    expect(anon.statusCode).toBe(200);
+    expect(anon.headers["x-cache"]).toBe("BYPASS");
+    expect(anon.headers["x-cache-hash"]).toBeTruthy();
+    expect(anon.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content).toContain("mock echo (m): hello lane");
+    expect(provider.calls).toBe(1);
+
+    const replay = await chat(app, lane.key, VALID);
+    expect(replay.headers["x-cache"]).toBe("HIT");
+    expect(replay.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content).toBe("scripted(mock): hello lane");
+    expect(provider.calls).toBe(1);
+
+    const m = metrics.snapshot();
+    expect(m.exact_misses).toBe(1);
+    expect(m.exact_hits).toBe(1);
+    expect(m.provider_requests).toBe(2);
     await app.close();
   });
 
@@ -383,6 +413,46 @@ describe("register + usage", () => {
     expect(a.requests).toBe(2);
     expect(b.tenant).toBe(bob.tenant_id);
     expect(b.requests).toBe(1);
+    await app.close();
+  });
+});
+
+describe("fallback cache discipline (INV-7)", () => {
+  it("a fallback answer stays under the serving provider key when the primary recovers", async () => {
+    let primaryDown = true;
+    const primary = new ScriptedProvider("mock", {
+      chat: async (req) => {
+        if (primaryDown) throw new GatewayError(502, "provider_error", "primary down", false);
+        return { id: "primary-1", model: req.model, content: "primary answer", usage: { prompt_tokens: 2, completion_tokens: 3 } };
+      },
+    });
+    const alt = new ScriptedProvider("alt", {
+      chat: async (req) => ({ id: "alt-1", model: req.model, content: "alt answer", usage: { prompt_tokens: 4, completion_tokens: 5 } }),
+    });
+    const providers = new Map([
+      ["mock", primary],
+      ["alt", alt],
+    ]);
+    const lanes = await laneAuth("mock");
+    const { app } = makeApp({ auth: lanes.auth, provider: primary, providers });
+    const lane = lanes.laneFor("mock").key;
+
+    const first = await chat(app, lane, VALID);
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["x-provider"]).toBe("alt");
+    expect(first.headers["x-fallback"]).toBe("true");
+    expect(primary.calls).toBe(1);
+    expect(alt.calls).toBe(1);
+
+    primaryDown = false;
+    const replay = await chat(app, lane, VALID);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.headers["x-cache"]).toBe("HIT");
+    expect(replay.headers["x-provider"]).toBe("alt");
+    expect(replay.headers["x-fallback"]).toBe("true");
+    expect(replay.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content).toBe("alt answer");
+    expect(primary.calls).toBe(1);
+    expect(alt.calls).toBe(1);
     await app.close();
   });
 });

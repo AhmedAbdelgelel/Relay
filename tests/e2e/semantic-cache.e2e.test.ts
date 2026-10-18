@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { SemanticCacheStore, SemanticHit } from "../../src/cache/SemanticCacheStore.js";
 import { InMemoryVectorStore } from "../../src/cache/InMemoryVectorStore.js";
 import { metrics } from "../../src/observability/metrics.js";
+import { POLICY_VERSION, systemFingerprint } from "../../src/policy/reuse.js";
 import { issueLane, laneAuth } from "../helpers/lane.js";
-import { chat, KeywordEmbedder, LeakyVectorStore, makeApp, ScriptedProvider } from "./harness.js";
+import { chat, KeywordEmbedder, LeakyVectorStore, makeApp, ScriptedProvider, unit } from "./harness.js";
 
 const lanes = await laneAuth("mock");
 const lane = lanes.laneFor("mock");
@@ -304,6 +305,101 @@ describe("semantic degradation and toggles", () => {
     const reworded = await chat(app, lane.key, ask("gateway disabled exact reworded"));
     expect(reworded.headers["x-cache"]).toBe("SEMANTIC_HIT");
     expect(provider.calls).toBe(1);
+    await app.close();
+  });
+});
+
+describe("seeded-row policy guards (e2e)", () => {
+  const seedFingerprint = systemFingerprint({ model: "m", messages: [{ role: "user", content: "seed" }], temperature: 1, stream: false });
+
+  it("a row admitted under an older policy version is skipped; the request re-admits at the current version", async () => {
+    const provider = new ScriptedProvider("mock");
+    const store = new InMemoryVectorStore();
+    const { app } = makeApp({ auth: lanes.auth, provider, embedder: new KeywordEmbedder(), semanticStore: store });
+    await store.save({
+      tenant: lane.tenant,
+      provider: "mock",
+      model: "m",
+      promptHash: "stale-policy-row",
+      promptText: "user: seed",
+      temperature: 1,
+      embedding: unit(0),
+      content: "stale answer",
+      usage: { prompt_tokens: 9, completion_tokens: 9 },
+      ttlSeconds: 3600,
+      systemFingerprint: seedFingerprint,
+      policyVersion: POLICY_VERSION - 1,
+    });
+
+    const first = await chat(app, lane.key, ask("gateway policy probe"));
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["x-cache"]).toBe("MISS");
+    expect(provider.calls).toBe(1);
+    expect(metrics.snapshot().semantic_misses).toBe(1);
+
+    const second = await chat(app, lane.key, ask("gateway policy probe reworded"));
+    expect(second.headers["x-cache"]).toBe("SEMANTIC_HIT");
+    expect(provider.calls).toBe(1);
+    const m = metrics.snapshot();
+    expect(m.semantic_hits).toBe(1);
+    expect(m.provider_calls_avoided).toBe(0);
+    await app.close();
+  });
+
+  it("a row whose system fingerprint no longer matches is skipped even at similarity 1.0", async () => {
+    const provider = new ScriptedProvider("mock");
+    const store = new InMemoryVectorStore();
+    const { app } = makeApp({ auth: lanes.auth, provider, embedder: new KeywordEmbedder(), semanticStore: store });
+    await store.save({
+      tenant: lane.tenant,
+      provider: "mock",
+      model: "m",
+      promptHash: "wrong-fingerprint-row",
+      promptText: "user: seed",
+      temperature: 1,
+      embedding: unit(0),
+      content: "fingerprint answer",
+      usage: { prompt_tokens: 3, completion_tokens: 4 },
+      ttlSeconds: 3600,
+      systemFingerprint: "f".repeat(64),
+      policyVersion: POLICY_VERSION,
+    });
+
+    const first = await chat(app, lane.key, ask("gateway fingerprint probe"));
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["x-cache"]).toBe("MISS");
+    expect(provider.calls).toBe(1);
+
+    const second = await chat(app, lane.key, ask("gateway fingerprint probe reworded"));
+    expect(second.headers["x-cache"]).toBe("SEMANTIC_HIT");
+    expect(provider.calls).toBe(1);
+    await app.close();
+  });
+
+  it("a seeded row with blank content is never served", async () => {
+    const provider = new ScriptedProvider("mock");
+    const store = new InMemoryVectorStore();
+    const { app } = makeApp({ auth: lanes.auth, provider, embedder: new KeywordEmbedder(), semanticStore: store });
+    await store.save({
+      tenant: lane.tenant,
+      provider: "mock",
+      model: "m",
+      promptHash: "blank-content-row",
+      promptText: "user: seed",
+      temperature: 1,
+      embedding: unit(0),
+      content: "   ",
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+      ttlSeconds: 3600,
+      systemFingerprint: seedFingerprint,
+      policyVersion: POLICY_VERSION,
+    });
+
+    const res = await chat(app, lane.key, ask("gateway blank probe"));
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-cache"]).toBe("MISS");
+    expect(provider.calls).toBe(1);
+    expect(metrics.snapshot().semantic_misses).toBe(1);
     await app.close();
   });
 });
