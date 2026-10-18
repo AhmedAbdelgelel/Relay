@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CacheRepository } from "../../src/cache/CacheRepository.js";
 import { InMemoryCache } from "../../src/cache/InMemoryCache.js";
+import { RedisCache } from "../../src/cache/RedisCache.js";
 import { buildExactCacheKey } from "../../src/domain/normalize.js";
 import { GatewayError } from "../../src/domain/types.js";
 import { metrics } from "../../src/observability/metrics.js";
@@ -298,6 +299,138 @@ describe("single-flight", () => {
     expect(retry.statusCode).toBe(200);
     expect(retry.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content).toBe("recovered answer");
     expect(metrics.snapshot().provider_errors).toBe(1);
+    await app.close();
+  });
+});
+
+describe("canonical edge equivalence", () => {
+  it("field order and an explicit default temperature collapse to one entry", async () => {
+    const provider = new ScriptedProvider("mock");
+    const { app } = makeApp({ auth: lanes.auth, provider, env: { SEMANTIC_ENABLED: "false" } });
+    const lane = lanes.laneFor("mock").key;
+
+    const first = await chat(app, lane, { model: "m", messages: [{ role: "user", content: "orderless" }] });
+    expect(first.headers["x-cache"]).toBe("MISS");
+
+    const reordered = await chat(app, lane, {
+      temperature: 1,
+      messages: [{ content: "orderless", role: "user" as const }],
+      model: "m",
+    });
+    expect(reordered.headers["x-cache"]).toBe("HIT");
+    expect(reordered.headers["x-cache-hash"]).toBe(first.headers["x-cache-hash"]);
+
+    const explicit = await chat(app, lane, { model: "m", messages: [{ role: "user", content: "orderless" }], temperature: 1.0 });
+    expect(explicit.headers["x-cache"]).toBe("HIT");
+    expect(explicit.headers["x-cache-hash"]).toBe(first.headers["x-cache-hash"]);
+    expect(provider.calls).toBe(1);
+    expect(metrics.snapshot().exact_hits).toBe(2);
+    await app.close();
+  });
+});
+
+describe("malformed-shape eviction", () => {
+  it("valid JSON with the wrong shape is evicted and served as MISS", async () => {
+    const provider = new ScriptedProvider("mock");
+    const inner = new InMemoryCache();
+    const dels: string[] = [];
+    const cache: CacheRepository = {
+      name: "spy",
+      get: (k) => inner.get(k),
+      set: (k, v, ttl) => inner.set(k, v, ttl),
+      del: (k) => {
+        dels.push(k);
+        return inner.del(k);
+      },
+      ping: () => inner.ping(),
+      close: () => inner.close(),
+    };
+    const { app } = makeApp({ auth: lanes.auth, provider, cache, env: { SEMANTIC_ENABLED: "false" } });
+    const lane = lanes.laneFor("mock").key;
+    const req = { model: "m", messages: [{ role: "user" as const, content: "wrong shape neighbor" }] };
+    const key = buildExactCacheKey("mock", { ...req, temperature: 1, stream: false }).key;
+    await inner.set(key, JSON.stringify({ content: 5, model: "m" }), 60);
+
+    const res = await chat(app, lane, req);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-cache"]).toBe("MISS");
+    expect(dels).toEqual([key]);
+    expect(provider.calls).toBe(1);
+    expect((await chat(app, lane, req)).headers["x-cache"]).toBe("HIT");
+    expect(provider.calls).toBe(1);
+    await app.close();
+  });
+});
+
+describe("real cache transport failure", () => {
+  it("RedisCache against a dead port: every request MISSes with a 200 and failure counters", async () => {
+    const provider = new ScriptedProvider("mock");
+    const cache = new RedisCache({ url: "redis://127.0.0.1:1", commandTimeoutMs: 150 });
+    try {
+      const { app } = makeApp({ auth: lanes.auth, provider, cache, env: { SEMANTIC_ENABLED: "false" } });
+      const lane = lanes.laneFor("mock").key;
+
+      const first = await chat(app, lane, body("redis down probe"));
+      expect(first.statusCode).toBe(200);
+      expect(first.headers["x-cache"]).toBe("MISS");
+      expect(first.headers["x-cache-hash"]).toBeTruthy();
+
+      const second = await chat(app, lane, body("redis down probe"));
+      expect(second.statusCode).toBe(200);
+      expect(second.headers["x-cache"]).toBe("MISS");
+      expect(second.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content).toBe(
+        first.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content,
+      );
+      expect(provider.calls).toBe(2);
+
+      const m = metrics.snapshot();
+      expect(m.cache_lookup_failed).toBe(2);
+      expect(m.cache_write_failed).toBe(2);
+      expect(m.provider_errors).toBe(0);
+      expect(m.exact_misses).toBe(2);
+      await app.close();
+    } finally {
+      await cache.close();
+    }
+  }, 15000);
+});
+
+describe("error responses never enter the cache (INV-8)", () => {
+  it("a 503 wave is never admitted; the recovered answer is admitted exactly once", async () => {
+    let down = true;
+    const provider = new ScriptedProvider("mock", {
+      chat: async (req) => {
+        if (down) throw new GatewayError(503, "provider_error", "primary down", true);
+        return { id: "inv8", model: req.model, content: "recovered answer", usage: { prompt_tokens: 2, completion_tokens: 3 } };
+      },
+    });
+    const { app } = makeApp({ auth: lanes.auth, provider, env: { SEMANTIC_ENABLED: "false" } });
+    const lane = lanes.laneFor("mock").key;
+
+    const failed = await chat(app, lane, body("inv8 probe"));
+    expect(failed.statusCode).toBe(503);
+    expect(failed.headers["x-cache-hash"]).toBeTruthy();
+    expect(json<{ error: { code: string } }>(failed).error.code).toBe("provider_error");
+    expect(provider.calls).toBe(3);
+
+    down = false;
+    const served = await chat(app, lane, body("inv8 probe"));
+    expect(served.statusCode).toBe(200);
+    expect(served.headers["x-cache"]).toBe("MISS");
+    expect(provider.calls).toBe(4);
+
+    const replay = await chat(app, lane, body("inv8 probe"));
+    expect(replay.statusCode).toBe(200);
+    expect(replay.headers["x-cache"]).toBe("HIT");
+    expect(replay.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content).toBe("recovered answer");
+    expect(provider.calls).toBe(4);
+
+    const m = metrics.snapshot();
+    expect(m.exact_misses).toBe(2);
+    expect(m.exact_hits).toBe(1);
+    expect(m.provider_errors).toBe(1);
+    expect(m.provider_requests).toBe(2);
+    expect(m.provider_calls_avoided).toBe(1);
     await app.close();
   });
 });
