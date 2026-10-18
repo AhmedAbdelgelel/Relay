@@ -268,15 +268,15 @@ policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost met
 - **Constraints:** Never throws; no keys/prompt text in logs; Prometheus is a follow-up.
 - **Why:** Operators see hits/misses/avoided spend without reading app logs.
 
-### Auth (`src/auth/*`, `src/api/routes/register.ts`, `src/api/routes/usage.ts`)
+### Auth (`src/auth/*`, `src/api/routes/register.ts`, `src/api/routes/usage.ts`, `src/api/routes/connections.ts`)
 
-- **Responsibility:** Two lanes on one chat endpoint. Registered lane (gateway key) gets the full cache pipeline plus per-tenant usage; anonymous lane (provider-key header) gets a try-out path with cache bypass and global counters only.
-- **Inputs:** `Authorization: Bearer <gateway-key>` (alias `x-api-key`) or `x-provider-key: <upstream-key>`; `GATEWAY_API_KEYS` seed and `CRED_ENC_KEY` from config.
-- **Outputs:** `request.auth` (tenant, provider) or anonymous context; `x-lane` plus `x-key-id` evidence headers; `POST /v1/register` issues a `lg_` key once; `GET /v1/usage` returns the caller tenant slice.
-- **Dependencies:** `ApiKeyStore` (`verify`, `create`, `list`, `revoke`, `rotate`), `CredentialStore` (`save`, `get`, `remove`); `laneGuard` preHandler.
+- **Responsibility:** Two lanes on one chat endpoint. Registered lane (gateway key) gets the full cache pipeline plus per-tenant usage; anonymous lane (provider-key header) gets a try-out path with cache bypass and global counters only. Registered tenants can store their own upstream credential per provider (BYO key + optional base URL) via `POST /v1/connections`.
+- **Inputs:** `Authorization: Bearer <gateway-key>` (alias `x-api-key`) or `x-provider-key: <upstream-key>`; `GATEWAY_API_KEYS` seed and `CRED_ENC_KEY` from config; `POST /v1/register` / `POST /v1/connections` bodies (`provider`, `provider_key`, optional `base_url` — http/https only).
+- **Outputs:** `request.auth` (tenant, provider) or anonymous context; `x-lane` plus `x-key-id` evidence headers; `POST /v1/register` issues a `lg_` key once; `GET /v1/usage` returns the caller tenant slice; `POST /v1/connections` upserts one credential (a reconnect replaces key and URL), `GET /v1/connections` lists metadata only — provider, base_url, effective endpoint, created_at; never key material.
+- **Dependencies:** `ApiKeyStore` (`verify`, `create`, `list`, `revoke`, `rotate`), `CredentialStore` (`save`, `get`, `list`, `remove`); `laneGuard` preHandler.
 - **Interface:** `laneGuard` — gateway key present goes registered, else provider key goes anonymous, else 401 with register hint.
-- **Constraints:** Lane pick runs before validation, provider, and cache; serving provider must equal key provider else 403; `x-tenant-id` always ignored; no key material in logs, metrics, health, or usage.
-- **Why:** Try-out traffic never touches server keys or cache entries; settled users get savings plus attributed numbers.
+- **Constraints:** Lane pick runs before validation, provider, and cache; serving provider must equal key provider else 403 — a matching tenant credential for the serving provider bypasses that check (operator env keys stay protected); a routed provider with no key anywhere → `401 provider_key_missing` (connect hint; checked before the 403); `x-tenant-id` always ignored; no key material in logs, metrics, health, or usage.
+- **Why:** Try-out traffic never touches server keys or cache entries; settled users get savings plus attributed numbers; BYO credentials let one gateway key serve any provider the tenant connected — OpenRouter `:free` models work on a keyless gateway.
 
 ### Composition root (`src/server.ts`, `src/infrastructure/config.ts`)
 
@@ -344,13 +344,20 @@ POST /v1/chat/completions
   system|user|assistant, non-empty content), temperature (0–2, default 1.0), max_tokens
   (optional positive int), stream (default false)}`. No key → `401` with register hint, no spend. Invalid →
   `400 {error:{code,message,request_id}}`, no provider call, no cache touch.
-- `POST /v1/register` (open): body `{ name, provider, provider_key }` → `201`
+- `POST /v1/register` (open): body `{ name, provider, provider_key, base_url? }` (`base_url` http/https
+  only, pins the tenant's own upstream endpoint) → `201`
   `{ tenant_id, provider, key (once), key_prefix }`; `400` on validation or unknown provider.
+- `POST /v1/connections` (gateway key): body `{ provider, provider_key, base_url? }` → `201`
+  `{ provider, base_url, endpoint, connected }`; upserts one credential per
+  `(tenant, provider)` — a reconnect replaces key and URL.
+- `GET /v1/connections` (gateway key): `{ tenant_id, connections [{ provider, base_url,
+  endpoint, created_at }] }` — metadata only, never key material.
 - `GET /v1/usage` (gateway key): caller tenant slice only
   `{ tenant_id, requests, exact_hits, semantic_hits, misses, hit_rate, provider_calls_avoided, avg_provider_ms }`.
 - Error vocabulary: timeout/abort → `504`; rate limit → `429` (+ parsed `retry_after`
   when present); upstream 5xx/auth/404 → `502`. Auth: missing or bad key → `401`;
-  revoked, expired, or provider mismatch → `403`; store down → `503 auth_unavailable`.
+  revoked, expired, or provider mismatch → `403`; routed provider with no key anywhere →
+  `401 provider_key_missing` (connect your own key); store down → `503 auth_unavailable`.
   Upstream bodies never leak beyond a bounded snippet.
 - Evidence headers on every validated reply: `x-request-id`, `x-provider`, `x-cache`,
   `x-cache-hash` (absent only on 400), `x-latency-ms`, `x-lane` (`registered` | `anonymous`);
