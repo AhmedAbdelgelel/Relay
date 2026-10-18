@@ -117,10 +117,20 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
     `POST /v1/register` → issued key shown once → "Use this key") plus a refresh action.
     Sampling stays gateway-side (`temperature ?? 1.0`), so the cache identity is byte-identical
     without the UI fields — pinned by the canonical parity test.
+14. Connect a provider — the client half of the gateway's per-tenant connections round
+    (`feat(gateway): per-tenant provider connections (BYO key + base_url) …`). With an adopted
+    gateway key the provider card becomes "Connect a provider" (`POST /v1/connections`:
+    provider · your upstream key · optional upstream URL), and every provider card grows a
+    "your key" row — the tenant's stored endpoint + `connected` badge, or a `Connect` button
+    that preselects that provider in the form (remount by key). `POST /v1/register` gained the
+    same optional upstream URL, so a key minted from the UI already pins its own endpoint.
+    `GET /v1/connections` is fetched alongside `/providers` on the registered lane and renders
+    metadata only (provider · base URL · endpoint · created_at) — never key material. The
+    mismatch 403 now carries its fix: "connect '<provider>' with your own key".
 
 ## Verification (results)
 
-- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (92 passing across 14 files),
+- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (101 passing across 14 files),
   `npm run build` (every route prerendered, incl. the new `/settings`) — green on the delivered tree.
 - Lighthouse (harness browser): accessibility 100 · best-practices 100 · SEO 100 on `/` in both
   themes; the same bar passed on `/playground` in light before the usage panel landed.
@@ -136,6 +146,14 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
   "Use this key"), after which the playground showed the streamed BYPASS, a non-streamed
   MISS (109 ms) → HIT (24 ms) round trip, and the Settings "Last exchange" inspector
   (payload · canonical form · response) over one client session.
+- Live pass for the provider-connections round (gateway restarted on the new code): OpenRouter
+  was registered from the UI against the operator's env key, then a `:free` chat streamed a real
+  completion (`provider=openrouter`, TTFT ≈ 2.1 s, usage reported). A differently-bound gateway
+  key reproduced the reported 403 — now with the actionable "connect '<provider>' with your own
+  key" hint — the card's `Connect` button preselected the provider, and after
+  `POST /v1/connections` (tenant key + tenant URL → local stub upstream) the same chat served
+  from the tenant endpoint in both JSON mode (MISS → 200) and stream mode. The OpenRouter and
+  Ollama cards showed their "your key" rows; the rest stayed "not connected · Connect".
 - QA findings and their fixes are tracked in the two `fix(web)` commits above. The mobile
   drawer at ≤767px is verified via jsdom behavior tests + generated-CSS inspection + a live
   synthetic-Escape check (the harness cannot size a viewport or screenshot, so pixel review

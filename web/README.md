@@ -46,11 +46,12 @@ src/components/
   ui/               Card, StatCard, Badge, Button, Table, EmptyState, Kbd, Switch, icons
   playground/       model picker (free-tier filter + live refresh), request panel,
                     thread, metrics card, trace, session panel
-  pages/            requests inspector, cache control room, providers (add-provider
-                    flow), settings (advanced toggle + last-exchange inspector)
+  pages/            requests inspector, cache control room, providers (connect a
+                    provider — BYO key + URL via POST /v1/connections — and add-provider
+                    register flow), settings (advanced toggle + last-exchange inspector)
 src/lib/
   gateway.ts        typed browser client (chat + SSE streaming + evidence headers
-                    + GET /v1/usage tenant slice)
+                    + GET /v1/usage tenant slice + GET/POST /v1/connections)
   canonical.ts      payload builder + canonical JSON + sha256 (byte-parity tested
                     against the gateway's real src/domain/normalize.ts)
   store.tsx         app state: chats, session stats, connection, advanced flag,
@@ -67,7 +68,7 @@ gateway reports.
 ## Testing
 
 ```bash
-npm test             # 92 tests — canonical parity, SSE parsing, stats, components
+npm test             # 101 tests — canonical parity, SSE parsing, stats, components
 ```
 
 The suite is hermetic (no network, no real timers). Contract tests lock the exact
