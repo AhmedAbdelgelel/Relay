@@ -5,8 +5,13 @@
  * offline-safe static catalog fallback (rough edge #15 — the fallback uses the
  * live provider ids, labels and endpoints), plus the routing explainer.
  *
- * The fetch is cancelled on unmount / connection change, and a failed poll
- * keeps the last successful list rather than clearing it.
+ * With a registered gateway key the view also fetches GET /v1/connections:
+ * each card shows the tenant's own credential ("your key") or a Connect
+ * button that preselects the connect form, which stores the key with POST
+ * /v1/connections.
+ *
+ * Both fetches are cancelled on unmount / connection change, and a failed
+ * poll keeps the last successful list rather than clearing it.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -15,7 +20,7 @@ import { IconRefresh } from "@/components/ui/icons";
 import { PageShell } from "@/components/pages/shared/PageShell";
 import { GatewayClient } from "@/lib/gateway";
 import { useAppStore } from "@/lib/store";
-import type { ProviderStatus } from "@/lib/types";
+import type { ConnectionsResult, ProviderStatus } from "@/lib/types";
 import { AddProviderCard } from "./AddProviderCard";
 import { PROVIDER_CATALOG } from "./catalog";
 import { ProviderCard, type ProviderCardData, type ProviderRenderState } from "./ProviderCard";
@@ -27,8 +32,12 @@ function Mono({ children }: { children: ReactNode }) {
 export function ProvidersView() {
   const { connection, offline } = useAppStore();
   const [live, setLive] = useState<ProviderStatus[] | null>(null);
+  const [connections, setConnections] = useState<ConnectionsResult | null>(null);
   const [failed, setFailed] = useState(false);
   const [reload, setReload] = useState(0);
+  const [connectTarget, setConnectTarget] = useState<{ provider: string; token: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +59,35 @@ export function ProvidersView() {
     };
   }, [connection, reload]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const client = new GatewayClient(connection);
+    client
+      .connections(controller.signal)
+      .then((next) => {
+        if (!cancelled) setConnections(next);
+      })
+      .catch(() => {
+        if (!cancelled) setConnections(null);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [connection, reload]);
+
   const refresh = useCallback(() => setReload((tick) => tick + 1), []);
+
+  const handleConnect = useCallback((providerId: string) => {
+    setConnectTarget((prev) => ({ provider: providerId, token: (prev?.token ?? 0) + 1 }));
+    document
+      .getElementById("connect-provider-card")
+      ?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, []);
+
+  const connectionFor = (providerId: string) =>
+    connections?.connections.find((entry) => entry.provider === providerId) ?? null;
 
   const unreachable = failed || offline;
   const entries: ProviderCardData[] =
@@ -98,12 +135,24 @@ export function ProvidersView() {
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {entries.map((provider) => (
           <li key={provider.id} data-provider={provider.id} className="min-w-0">
-            <ProviderCard provider={provider} state={state} />
+            <ProviderCard
+              provider={provider}
+              state={state}
+              connection={connectionFor(provider.id)}
+              onConnect={connection.apiKey ? handleConnect : undefined}
+            />
           </li>
         ))}
       </ul>
 
-      <AddProviderCard live={live} onRegistered={refresh} />
+      <div id="connect-provider-card">
+        <AddProviderCard
+          key={`connect-${connectTarget?.provider ?? "none"}-${connectTarget?.token ?? 0}`}
+          live={live}
+          onRegistered={refresh}
+          initialProvider={connectTarget?.provider}
+        />
+      </div>
 
       <Card>
         <CardTitle>How routing works</CardTitle>
@@ -124,10 +173,10 @@ export function ProvidersView() {
             </p>
           </div>
           <div>
-            <div className="text-[12px] font-medium text-ink">Server-side keys</div>
+            <div className="text-[12px] font-medium text-ink">Your own keys</div>
             <p className="mt-1 text-[12px] leading-5 text-ink-2">
-              API keys come from server env or a stored credential for a registered lane, never the
-              browser.
+              Server env keys or your stored credential (<Mono>POST /v1/connections</Mono>) serve
+              each provider — upstream keys never live in the browser.
             </p>
           </div>
         </div>

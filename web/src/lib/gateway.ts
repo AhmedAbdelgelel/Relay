@@ -12,6 +12,8 @@ import type {
   ChatCompletion,
   ChatPayload,
   Connection,
+  ConnectionsResult,
+  ConnectResult,
   Evidence,
   HealthInfo,
   Lane,
@@ -256,19 +258,70 @@ export class GatewayClient {
   /**
    * POST /v1/register (the product's open route): validate provider, store the
    * upstream key encrypted, issue a gateway key that is shown exactly once.
+   * `baseUrl` (optional) pins the tenant's own upstream endpoint for the
+   * registered provider — the same setting POST /v1/connections stores later.
    * Registering again creates a NEW tenant — that is the contract, not churn.
    */
   async register(
-    body: { name: string; provider: string; providerKey: string },
+    body: { name: string; provider: string; providerKey: string; baseUrl?: string },
     signal?: AbortSignal,
   ): Promise<RegisterResult> {
+    const baseUrl = body.baseUrl?.trim() ?? "";
     const res = await fetch(this.url("/v1/register"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: body.name, provider: body.provider, provider_key: body.providerKey }),
+      body: JSON.stringify({
+        name: body.name,
+        provider: body.provider,
+        provider_key: body.providerKey,
+        ...(baseUrl ? { base_url: baseUrl } : {}),
+      }),
       signal,
     });
     const json = (await res.json().catch(() => null)) as RegisterResult | null;
+    if (json === null) throw errorFrom(res.status, null, null);
+    if (!res.ok) throw errorFrom(res.status, json, null);
+    return json;
+  }
+
+  /**
+   * GET /v1/connections — the tenant's stored provider credentials as metadata
+   * (provider, URL, created_at; never keys). Null without a gateway key and on
+   * a rejected key (401/403), like usage() — an honest empty state beats an
+   * error row on a polled surface.
+   */
+  async connections(signal?: AbortSignal): Promise<ConnectionsResult | null> {
+    if (!this.apiKey) return null;
+    const res = await fetch(this.url("/v1/connections"), {
+      headers: this.headers(),
+      signal,
+      cache: "no-store",
+    });
+    if (res.status === 401 || res.status === 403) return null;
+    if (!res.ok) throw errorFrom(res.status, null, null);
+    return (await res.json()) as ConnectionsResult;
+  }
+
+  /**
+   * POST /v1/connections — attach (or replace) the tenant's own upstream key
+   * and optional base URL for one provider, on an existing gateway key.
+   */
+  async connectProvider(
+    body: { provider: string; providerKey: string; baseUrl?: string },
+    signal?: AbortSignal,
+  ): Promise<ConnectResult> {
+    const baseUrl = body.baseUrl?.trim() ?? "";
+    const res = await fetch(this.url("/v1/connections"), {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        provider: body.provider,
+        provider_key: body.providerKey,
+        ...(baseUrl ? { base_url: baseUrl } : {}),
+      }),
+      signal,
+    });
+    const json = (await res.json().catch(() => null)) as ConnectResult | null;
     if (json === null) throw errorFrom(res.status, null, null);
     if (!res.ok) throw errorFrom(res.status, json, null);
     return json;

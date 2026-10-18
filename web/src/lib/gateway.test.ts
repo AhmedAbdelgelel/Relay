@@ -340,4 +340,136 @@ describe("POST /v1/register", () => {
       client.register({ name: "p", provider: "nope", providerKey: "" }),
     ).rejects.toMatchObject({ status: 400, message: "provider nope" });
   });
+
+  it("includes base_url only when an upstream URL is given (trimmed)", async () => {
+    fetchStub.mockImplementation(() => Promise.resolve(jsonResponse(REGISTER_BODY, 201)));
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "" });
+    await client.register({
+      name: "playground",
+      provider: "openrouter",
+      providerKey: "sk-upstream",
+      baseUrl: "  https://own.example/v1  ",
+    });
+
+    expect(String(fetchStub.mock.calls[0][1]?.body)).toBe(
+      JSON.stringify({
+        name: "playground",
+        provider: "openrouter",
+        provider_key: "sk-upstream",
+        base_url: "https://own.example/v1",
+      }),
+    );
+  });
+});
+
+describe("GET /v1/connections", () => {
+  it("without a gateway key: resolves null without a request", async () => {
+    const client = new GatewayClient({ baseUrl: "", apiKey: "" });
+    await expect(client.connections()).resolves.toBeNull();
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("200: returns the metadata list and sends the gateway key", async () => {
+    const body = {
+      tenant_id: "t-1",
+      connections: [
+        {
+          provider: "openrouter",
+          base_url: "https://own.example/v1",
+          endpoint: "https://own.example/v1",
+          created_at: "2026-10-18T00:00:00.000Z",
+        },
+      ],
+    };
+    fetchStub.mockImplementation(() => Promise.resolve(jsonResponse(body)));
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "lg_test" });
+    await expect(client.connections()).resolves.toEqual(body);
+
+    const [input, init] = fetchStub.mock.calls[0];
+    expect(String(input).endsWith("/v1/connections")).toBe(true);
+    expect(new Headers(init?.headers as HeadersInit).get("Authorization")).toBe("Bearer lg_test");
+  });
+
+  it("401/403 (rejected key): resolves null instead of throwing", async () => {
+    fetchStub.mockImplementation(() =>
+      Promise.resolve(jsonResponse({ error: { code: "invalid_api_key" } }, 401)),
+    );
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "lg_revoked" });
+    await expect(client.connections()).resolves.toBeNull();
+  });
+});
+
+describe("POST /v1/connections", () => {
+  const CONNECTED = {
+    provider: "openrouter",
+    base_url: "https://own.example/v1",
+    endpoint: "https://own.example/v1",
+    connected: true,
+  };
+
+  it("201: posts provider/provider_key/base_url with the gateway key", async () => {
+    fetchStub.mockImplementation(() => Promise.resolve(jsonResponse(CONNECTED, 201)));
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "lg_test" });
+    const result = await client.connectProvider({
+      provider: "openrouter",
+      providerKey: "sk-tenant",
+      baseUrl: "  https://own.example/v1  ",
+    });
+
+    expect(result).toEqual(CONNECTED);
+    const [input, init] = fetchStub.mock.calls[0];
+    expect(String(input).endsWith("/v1/connections")).toBe(true);
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers as HeadersInit).get("Authorization")).toBe("Bearer lg_test");
+    expect(String(init?.body)).toBe(
+      JSON.stringify({
+        provider: "openrouter",
+        provider_key: "sk-tenant",
+        base_url: "https://own.example/v1",
+      }),
+    );
+  });
+
+  it("omits base_url when empty — the gateway default upstream serves", async () => {
+    fetchStub.mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse(
+          { provider: "openai", base_url: null, endpoint: "https://api.openai.com/v1", connected: true },
+          201,
+        ),
+      ),
+    );
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "lg_test" });
+    const result = await client.connectProvider({
+      provider: "openai",
+      providerKey: "sk-tenant",
+      baseUrl: "   ",
+    });
+
+    expect(result.base_url).toBeNull();
+    expect(String(fetchStub.mock.calls[0][1]?.body)).toBe(
+      JSON.stringify({ provider: "openai", provider_key: "sk-tenant" }),
+    );
+  });
+
+  it("403 provider_mismatch maps into a GatewayError with the connect hint", async () => {
+    fetchStub.mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse(
+          { error: { code: "provider_mismatch", message: "connect 'openrouter'" } },
+          403,
+        ),
+      ),
+    );
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "lg_mock_bound" });
+    await expect(
+      client.connectProvider({ provider: "openrouter", providerKey: "sk-tenant" }),
+    ).rejects.toMatchObject({ status: 403, message: "connect 'openrouter'" });
+  });
 });

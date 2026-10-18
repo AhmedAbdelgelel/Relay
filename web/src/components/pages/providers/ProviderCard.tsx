@@ -15,6 +15,12 @@ export interface ProviderCardData {
 
 export type ProviderRenderState = "live" | "offline" | "checking";
 
+/** The tenant's own credential for one provider (GET /v1/connections). */
+export interface ProviderKeyConnection {
+  /** Effective upstream URL: the tenant's base_url or the gateway default. */
+  endpoint: string;
+}
+
 /** Show up to 8 models; the rest stay behind an aria-expanded "+N more". */
 const MAX_VISIBLE_MODELS = 8;
 
@@ -49,14 +55,22 @@ function ModelChips({ models }: { models: string[] }) {
 
 /**
  * One provider card: status dot + label (+ "· default"), status pill and the
- * endpoint / models / status rows (legacy liveProviderCards shape).
+ * endpoint / models / status rows (legacy liveProviderCards shape). With a
+ * registered gateway key the card also shows "your key": the tenant's stored
+ * credential row (POST /v1/connections) or a Connect button that preselects
+ * the connect form.
  */
 export function ProviderCard({
   provider,
   state,
+  connection,
+  onConnect,
 }: {
   provider: ProviderCardData;
   state: ProviderRenderState;
+  connection?: ProviderKeyConnection | null;
+  /** Present when a gateway key is adopted: preselects the connect form. */
+  onConnect?: (providerId: string) => void;
 }) {
   const connected = state === "live" && provider.configured;
   const pill: { tone: BadgeTone; text: string } =
@@ -112,6 +126,32 @@ export function ProviderCard({
           <dt className="w-20 shrink-0 text-ink-3">status</dt>
           <dd className="min-w-0 text-ink-2">{statusNote}</dd>
         </div>
+        {state === "live" && (connection != null || onConnect != null) ? (
+          <div className="flex gap-3">
+            <dt className="w-20 shrink-0 text-ink-3">your key</dt>
+            <dd className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {connection ? (
+                <>
+                  <span className="break-all font-mono text-ink-2">{connection.endpoint}</span>
+                  <Badge tone="hit">connected</Badge>
+                </>
+              ) : (
+                <>
+                  <span className="text-ink-2">not connected</span>
+                  {onConnect ? (
+                    <button
+                      type="button"
+                      onClick={() => onConnect(provider.id)}
+                      className="rounded-pill border border-line px-2 py-0.5 text-[11px] text-ink-3 transition-colors duration-150 hover:bg-wash hover:text-ink"
+                    >
+                      Connect
+                    </button>
+                  ) : null}
+                </>
+              )}
+            </dd>
+          </div>
+        ) : null}
         {provider.active ? (
           <div className="flex gap-3">
             <dt className="w-20 shrink-0 text-ink-3">default</dt>

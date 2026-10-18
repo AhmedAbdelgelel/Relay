@@ -32,6 +32,29 @@ export interface RegisterResult {
   key_prefix: string;
 }
 
+/** POST /v1/connections — 201 payload; `endpoint` is the effective upstream. */
+export interface ConnectResult {
+  provider: string;
+  base_url: string | null;
+  endpoint: string;
+  connected: true;
+}
+
+/** One stored credential, metadata only — GET /v1/connections never returns keys. */
+export interface ConnectionInfo {
+  provider: string;
+  /** The tenant's own upstream URL, or null for the gateway default. */
+  base_url: string | null;
+  endpoint: string;
+  created_at: string;
+}
+
+/** GET /v1/connections (registered lane only). */
+export interface ConnectionsResult {
+  tenant_id: string;
+  connections: ConnectionInfo[];
+}
+
 /** Connection to a gateway. Empty `baseUrl` = same origin (the Next rewrites). */
 export interface Connection {
   baseUrl: string;
