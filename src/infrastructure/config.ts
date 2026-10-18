@@ -54,9 +54,12 @@ function str(env: NodeJS.ProcessEnv, name: string, fallback = ""): string {
 
 function num(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = env[name];
-  if (!raw) return fallback;
+  if (raw === undefined || raw.trim() === "") return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`${name} must be a positive number; got "${raw}"`);
+  }
+  return n;
 }
 
 function bool(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean {
@@ -67,16 +70,22 @@ function bool(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean 
 
 function frac(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = env[name];
-  if (!raw) return fallback;
+  if (raw === undefined || raw.trim() === "") return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 && n < 1 ? n : fallback;
+  if (!Number.isFinite(n) || n <= 0 || n >= 1) {
+    throw new Error(`${name} must be a number in (0, 1); got "${raw}"`);
+  }
+  return n;
 }
 
 function nonNegative(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = env[name];
-  if (raw === undefined || raw === "") return fallback;
+  if (raw === undefined || raw.trim() === "") return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`${name} must be a non-negative number; got "${raw}"`);
+  }
+  return n;
 }
 
 function seedApiKeys(raw: string): SeedApiKey[] {
