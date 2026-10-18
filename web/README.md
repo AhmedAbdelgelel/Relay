@@ -1,8 +1,8 @@
 # Relay Control Plane — `web/`
 
 Next.js UI for the Relay LLM gateway: playground, live metrics, cache evidence,
-request inspector, provider status, and the registered lane's per-tenant usage —
-built with **Next.js 16 (App Router)**,
+request inspector, provider status, settings (connection + advanced inspection) and
+the registered lane's per-tenant usage — built with **Next.js 16 (App Router)**,
 **React 19**, **TypeScript**, and **Tailwind CSS v4**.
 
 Design language follows the DeepSeek-style system extracted in
@@ -38,19 +38,23 @@ setup needed, no keys in the client bundle.
 ## Architecture
 
 ```
-src/app/            routes: / (overview), /playground, /requests, /cache, /providers
+src/app/            routes: / (overview), /playground, /requests, /cache, /providers,
+                    /settings
 src/components/
   shell/            sidebar, topbar, connection menu (gateway URL + API key +
                     register-in-place via POST /v1/register)
-  ui/               Card, StatCard, Badge, Button, Table, EmptyState, Kbd, icons
-  playground/       request panel, thread, metrics card, trace, session panel
-  pages/            requests inspector, cache control room, providers status
+  ui/               Card, StatCard, Badge, Button, Table, EmptyState, Kbd, Switch, icons
+  playground/       model picker (free-tier filter + live refresh), request panel,
+                    thread, metrics card, trace, session panel
+  pages/            requests inspector, cache control room, providers (add-provider
+                    flow), settings (advanced toggle + last-exchange inspector)
 src/lib/
   gateway.ts        typed browser client (chat + SSE streaming + evidence headers
                     + GET /v1/usage tenant slice)
   canonical.ts      payload builder + canonical JSON + sha256 (byte-parity tested
                     against the gateway's real src/domain/normalize.ts)
-  store.tsx         app state: chats, session stats, connection, 30 s health/metrics poll
+  store.tsx         app state: chats, session stats, connection, advanced flag,
+                    30 s health/metrics poll
   types.ts          gateway contract types
 src/test/           vitest setup + fetch/SSE stub helpers
 ```
@@ -63,7 +67,7 @@ gateway reports.
 ## Testing
 
 ```bash
-npm test             # 83 tests — canonical parity, SSE parsing, stats, components
+npm test             # 92 tests — canonical parity, SSE parsing, stats, components
 ```
 
 The suite is hermetic (no network, no real timers). Contract tests lock the exact

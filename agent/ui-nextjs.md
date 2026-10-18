@@ -107,11 +107,21 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
     the issued key is shown once, and "Use this key" applies it immediately — an applied-key
     stale-draft race found in live verification is locked by a component contract test).
     Anonymous users now finish the product's zero-setup story without copy-pasting keys.
+13. Simple composer + Advanced split — the playground shed its provider selector and sampling
+    controls: the model is the one routing control (a picker with `All` / `$0 free` filters, a
+    custom-id field, and `Refresh` that pulls the live CORS-open OpenRouter $0 tier plus the
+    gateway's configured models from `GET /providers`). A new `/settings` route owns the
+    connection editor and the persisted "Advanced" toggle: off, the playground is only the chat
+    (no metrics line, evidence card, trace or session counters); on, every technical surface
+    returns. Providers gains "Add a provider" (provider · upstream key · gateway URL →
+    `POST /v1/register` → issued key shown once → "Use this key") plus a refresh action.
+    Sampling stays gateway-side (`temperature ?? 1.0`), so the cache identity is byte-identical
+    without the UI fields — pinned by the canonical parity test.
 
 ## Verification (results)
 
-- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (83 passing), `npm run build`
-  (all 9 routes prerendered) — green on the delivered tree.
+- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (92 passing across 14 files),
+  `npm run build` (every route prerendered, incl. the new `/settings`) — green on the delivered tree.
 - Lighthouse (harness browser): accessibility 100 · best-practices 100 · SEO 100 on `/` in both
   themes; the same bar passed on `/playground` in light before the usage panel landed.
 - Live browser pass over all five routes: try-out lane send with no key (BYPASS + hint copy),
@@ -119,6 +129,13 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
   x-cache-hash" chip, cache page numbers equal `/metrics` (33.33% = 3 hit / 6 miss), providers
   line equals the raw `/providers` payload (3/6 configured, mock active default), theme flip
   instant + persisted across reload, error rows carry request id + status.
+- Live pass for the simple-composer round: `/settings` renders the live cache config and the
+  persisted Advanced toggle (SSR-safe — off in the HTML, hydrated from storage); the picker's
+  `Refresh` pulled 19 live `$0` OpenRouter models (24 → 28 options) and the `$0 free` filter hid
+  every paid id; a gateway key was minted end-to-end from "Add a provider" (shown-once key →
+  "Use this key"), after which the playground showed the streamed BYPASS, a non-streamed
+  MISS (109 ms) → HIT (24 ms) round trip, and the Settings "Last exchange" inspector
+  (payload · canonical form · response) over one client session.
 - QA findings and their fixes are tracked in the two `fix(web)` commits above. The mobile
   drawer at ≤767px is verified via jsdom behavior tests + generated-CSS inspection + a live
   synthetic-Escape check (the harness cannot size a viewport or screenshot, so pixel review
