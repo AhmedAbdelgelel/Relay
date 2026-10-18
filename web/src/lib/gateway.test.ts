@@ -249,3 +249,52 @@ describe("evidenceFrom", () => {
     expect(evidence.coalesced).toBe(false);
   });
 });
+
+describe("GET /v1/usage (tenant slice)", () => {
+  const USAGE_BODY = {
+    tenant: "804baf34-fc6a-48b4-ac67-0b5a18c81726",
+    requests: 7,
+    exact_hits: 3,
+    semantic_hits: 1,
+    misses: 3,
+    coalesced: 2,
+    hit_rate: 0.5,
+    provider_calls_avoided: 4,
+    latency_ms_total: 900,
+    avg_latency_ms: 128,
+  };
+
+  it("with a gateway key: returns the slice and sends Authorization", async () => {
+    fetchStub.mockImplementation(() => Promise.resolve(jsonResponse(USAGE_BODY, 200)));
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "lg_tenant" });
+    const usage = await client.usage();
+
+    expect(usage).toEqual(USAGE_BODY);
+    const [input, init] = fetchStub.mock.calls[0];
+    expect(String(input).endsWith("/v1/usage")).toBe(true);
+    const headers = new Headers(init?.headers as HeadersInit);
+    expect(headers.get("Authorization")).toBe("Bearer lg_tenant");
+  });
+
+  it("anonymous (no key): returns null and never touches the network", async () => {
+    const callsBefore = fetchStub.mock.calls.length;
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "" });
+    const usage = await client.usage();
+
+    expect(usage).toBeNull();
+    expect(fetchStub.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("a rejected or revoked key (401/403) reads as null, not a thrown error", async () => {
+    fetchStub.mockImplementation(() =>
+      Promise.resolve(jsonResponse({ error: { code: "unauthorized", message: "no" } }, 401)),
+    );
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "lg_revoked" });
+    const usage = await client.usage();
+
+    expect(usage).toBeNull();
+  });
+});

@@ -31,7 +31,13 @@ export function SessionPanel({ stats }: { stats: SessionStats }) {
   const semanticRate =
     semanticDecided > 0 ? `${Math.round((stats.semanticHits / semanticDecided) * 100)}%` : "—";
   const completed = stats.requests - stats.errors;
-  const avgLatency = completed > 0 ? formatLatency(stats.latencyMsTotal / completed) : "—";
+  // Errors have no latency sample (rough edge #7), so the honest average
+  // discloses its sample size once aborted/failed calls would otherwise
+  // silently shift the divisor.
+  const avgLatency =
+    completed > 0
+      ? `${formatLatency(stats.latencyMsTotal / completed)}${stats.errors > 0 ? ` (n=${completed})` : ""}`
+      : "—";
   const avgTtft = stats.ttftCount > 0 ? `${Math.round(stats.ttftMsTotal / stats.ttftCount)}ms` : "—";
   const totalTokens = stats.promptTokens + stats.completionTokens;
 

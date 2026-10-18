@@ -42,7 +42,23 @@ describe("SessionPanel", () => {
     expect(cellValue("hit rate")).toBe("50%");
     expect(cellValue("stream chunks")).toBe("7");
     expect(cellValue("avg TTFT")).toBe("100ms");
+    expect(cellValue("avg latency")).toBe("125ms");
     expect(cellValue("semantic hits")).toBe("1");
+  });
+
+  it("discloses the latency sample size once errors drop samples", () => {
+    const withErrors: SessionStats = {
+      ...EMPTY_STATS,
+      requests: 5,
+      errors: 2,
+      latencyMsTotal: 300,
+    };
+
+    render(<SessionPanel stats={withErrors} />);
+
+    // 3 latency samples remain: the average must say so instead of silently
+    // dividing by a different number than the request count.
+    expect(cellValue("avg latency")).toBe("100ms (n=3)");
   });
 
   it("renders an em dash hit rate when no request reached a cache decision", () => {

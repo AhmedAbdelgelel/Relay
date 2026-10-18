@@ -7,6 +7,8 @@
  */
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { GatewayClient } from "@/lib/gateway";
 import {
   Badge,
   buttonClasses,
@@ -21,7 +23,12 @@ import {
 import { IconChevronDown } from "@/components/ui/icons";
 import { formatCount, formatLatency, formatRate, percent } from "@/lib/format";
 import { useAppStore } from "@/lib/store";
-import { EMPTY_METRICS, type MetricsSnapshot } from "@/lib/types";
+import {
+  type Connection,
+  EMPTY_METRICS,
+  type MetricsSnapshot,
+  type TenantUsage,
+} from "@/lib/types";
 
 const PIPELINE = [
   "Request",
@@ -57,17 +64,142 @@ function metricRows(m: MetricsSnapshot): Array<[string, string]> {
   ];
 }
 
-function LiveStat({ value, label }: { value: string; label: string }) {
+function LiveStat({ value, label, title }: { value: string; label: string; title?: string }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" title={title}>
       <div className="truncate text-[13px] font-semibold text-ink tabular-nums">{value}</div>
       <div className="text-[11px] text-ink-3">{label}</div>
     </div>
   );
 }
 
+type UsageFetch = { kind: "ok"; data: TenantUsage } | { kind: "unavailable" };
+type UsageState = { kind: "anonymous" } | UsageFetch;
+
+/** "Your usage" — the registered-lane tenant slice from GET /v1/usage (the
+ * product's own per-tenant contract). Anonymous traffic has no tenant slice:
+ * the card says so instead of showing another set of gateway-wide zeros. */
+function UsagePanel({ connection }: { connection: Connection }) {
+  const registered = Boolean(connection.apiKey);
+  // Annotated with the connection it came from so a key swap never flashes
+  // the previous tenant's numbers.
+  const [fetched, setFetched] = useState<{ key: string; result: UsageFetch } | null>(null);
+  const connectionKey = `${connection.baseUrl}\u0000${connection.apiKey}`;
+
+  useEffect(() => {
+    const { baseUrl, apiKey } = connection;
+    if (!apiKey) return; // anonymous lane: no tenant slice, no request
+    const client = new GatewayClient({ baseUrl, apiKey });
+    let alive = true;
+    const load = async (): Promise<void> => {
+      try {
+        const data = await client.usage();
+        if (alive)
+          setFetched({
+            key: `${baseUrl}\u0000${apiKey}`,
+            result: data ? { kind: "ok", data } : { kind: "unavailable" },
+          });
+      } catch {
+        if (alive) setFetched({ key: `${baseUrl}\u0000${apiKey}`, result: { kind: "unavailable" } });
+      }
+    };
+    void load();
+    // Same cadence as the store's /health + /metrics poll so the data
+    // surfaces move together.
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [connection]);
+
+  // Display state is fully derived at render: a derivable fact never needs an
+  // effect-side setState (react-hooks/set-state-in-effect).
+  const state: UsageState = !registered
+    ? { kind: "anonymous" }
+    : fetched && fetched.key === connectionKey
+      ? fetched.result
+      : { kind: "unavailable" };
+
+  return (
+    <Card>
+      <CardTitle>Your usage</CardTitle>
+      {state.kind === "ok" ? (
+        <>
+          <div
+            aria-live="polite"
+            className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4"
+          >
+            <LiveStat
+              value={formatCount(state.data.requests)}
+              label="requests"
+              title="Requests executed under this tenant's gateway key"
+            />
+            <LiveStat
+              value={formatCount(state.data.exact_hits)}
+              label="exact hits"
+              title="Exact cache hits for this tenant — the provider was not called"
+            />
+            <LiveStat
+              value={formatCount(state.data.semantic_hits)}
+              label="semantic hits"
+              title="Paraphrase reuses served from the semantic cache for this tenant"
+            />
+            <LiveStat
+              value={formatCount(state.data.misses)}
+              label="misses"
+              title="Requests that reached a provider"
+            />
+            <LiveStat
+              value={usageHitRate(state.data)}
+              label="hit rate"
+              title="hits / (hits + misses) for this tenant"
+            />
+            <LiveStat
+              value={formatCount(state.data.provider_calls_avoided)}
+              label="avoided calls"
+              title="hits plus coalesced followers — provider calls that never happened"
+            />
+            <LiveStat
+              value={state.data.requests > 0 ? formatLatency(state.data.avg_latency_ms) : "--"}
+              label="avg latency"
+              title="Average gateway latency for this tenant's requests"
+            />
+            <LiveStat
+              value={formatCount(state.data.coalesced)}
+              label="coalesced"
+              title="Concurrent identical requests joined via single-flight"
+            />
+          </div>
+          <p className="mt-3 text-[12px] text-ink-3">
+            <span className="font-mono">GET /v1/usage</span> · tenant{" "}
+            <span className="font-mono" title={state.data.tenant}>
+              {state.data.tenant.slice(0, 8)}…
+            </span>
+          </p>
+        </>
+      ) : (
+        <p className="mt-0 text-[12px] leading-5 text-ink-3">
+          {state.kind === "anonymous"
+            ? "Anonymous try-out lane — per-tenant usage appears once a gateway key is registered and set in the connection menu."
+            : "Usage unavailable — the gateway key was rejected (a gateway restart clears in-memory keys) or the gateway is unreachable."}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/** Display rate derived from counts — same formula as the Cache page, so a
+ * payload `hit_rate` of 0 on an empty tenant never reads as a fabricated 0%. */
+function usageHitRate(u: TenantUsage): string {
+  const decided = u.exact_hits + u.semantic_hits + u.misses;
+  return decided > 0
+    ? formatRate(percent(u.exact_hits + u.semantic_hits, decided))
+    : "--";
+}
+
 export default function OverviewPage() {
-  const { health, metrics, stats, status } = useAppStore();
+  const { health, metrics, stats, status, connection } = useAppStore();
   const m = metrics ?? EMPTY_METRICS;
 
   const decided = m.exact_hits + m.exact_misses;
@@ -145,6 +277,8 @@ export default function OverviewPage() {
           <LiveStat value={formatCount(stats.errors)} label="errors" />
         </div>
       </Card>
+
+      <UsagePanel connection={connection} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
