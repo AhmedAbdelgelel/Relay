@@ -138,7 +138,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
               if (raw === null) continue;
               try {
                 const cached = JSON.parse(raw) as CachedChatResponse;
-                if (typeof cached.content !== "string" || typeof cached.model !== "string") throw new Error("bad shape");
+                if (typeof cached.content !== "string" || typeof cached.model !== "string" || cached.content.trim() === "") throw new Error("bad shape");
                 const latency = Date.now() - start;
                 metrics.inc("exact_hits");
                 metrics.observeTenantExactHit(tenant);
