@@ -8,6 +8,22 @@
 export type CacheVerdict = "HIT" | "SEMANTIC_HIT" | "MISS" | "DISABLED" | "BYPASS";
 export type Lane = "registered" | "anonymous";
 
+/** GET /v1/usage — the caller tenant slice only (registered lane). Field names
+ * mirror the gateway payload exactly (runbook errors corrected from the wire:
+ * `avg_latency_ms`, plus `coalesced`/`latency_ms_total` the runbook omitted). */
+export interface TenantUsage {
+  tenant: string;
+  requests: number;
+  exact_hits: number;
+  semantic_hits: number;
+  misses: number;
+  coalesced: number;
+  hit_rate: number;
+  provider_calls_avoided: number;
+  latency_ms_total: number;
+  avg_latency_ms: number;
+}
+
 /** Connection to a gateway. Empty `baseUrl` = same origin (the Next rewrites). */
 export interface Connection {
   baseUrl: string;

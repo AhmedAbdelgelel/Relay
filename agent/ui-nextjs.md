@@ -92,17 +92,30 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
    New chat routing, anonymous try-out lane for zero-setup sends, stale-strip reset,
    mobile nav drawer, bare-seconds wait parser.
 7. `29ccd5b` + `b62f449` — build hygiene: Turbopack root pinned to `web/`, unused import dropped.
+8. `24d651a` — control-plane UI in the root README; plan marked complete with verification results.
+9. `2764d13` — reply evidence persists on the chat message, so the lane/key/coalescing rows of
+   the evidence card survive a reload (regression test included).
+10. `b5e17f9` — full mobile-drawer contract test in jsdom (aria/scrim/scroll-lock/Escape/backdrop/
+    route-change/breakpoint-crossing); `c59620f` — WCAG AA ink tokens (`ink-2` 0.65, `ink-3` 0.56/0.5);
+    Lighthouse accessibility now 100/100 on Overview in light AND dark.
+11. "Your usage" card on Overview — the registered lane's `GET /v1/usage` tenant slice (requests,
+    exact/semantic hits, misses, derived hit rate, avoided calls, avg latency, coalesced) with
+    honest anonymous/unavailable states; session panel discloses the latency sample size `(n=…)`
+    once errors drop samples from the average.
 
 ## Verification (results)
 
-- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (70 passing), `npm run build`
+- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (79 passing), `npm run build`
   (all 9 routes prerendered) — green on the delivered tree.
+- Lighthouse (harness browser): accessibility 100 · best-practices 100 · SEO 100 on `/` in both
+  themes; the same bar passed on `/playground` in light before the usage panel landed.
 - Live browser pass over all five routes: try-out lane send with no key (BYPASS + hint copy),
   registered key MISS → HIT with the `llm:exact:v1:mock:…` key and the "browser sha256 matches
   x-cache-hash" chip, cache page numbers equal `/metrics` (33.33% = 3 hit / 6 miss), providers
   line equals the raw `/providers` payload (3/6 configured, mock active default), theme flip
   instant + persisted across reload, error rows carry request id + status.
 - QA findings and their fixes are tracked in the two `fix(web)` commits above. The mobile
-  drawer at ≤767px is verified via jsdom behavior tests + generated-CSS inspection; the
-  harness desktop could not emulate a narrow viewport, so pixel review remains manual.
+  drawer at ≤767px is verified via jsdom behavior tests + generated-CSS inspection + a live
+  synthetic-Escape check (the harness cannot size a viewport or screenshot, so pixel review
+  remains manual).
 - The legacy UI (`public/`) and its root test contracts are untouched.

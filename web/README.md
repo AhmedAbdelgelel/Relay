@@ -1,7 +1,8 @@
 # Relay Control Plane — `web/`
 
 Next.js UI for the Relay LLM gateway: playground, live metrics, cache evidence,
-request inspector, and provider status — built with **Next.js 16 (App Router)**,
+request inspector, provider status, and the registered lane's per-tenant usage —
+built with **Next.js 16 (App Router)**,
 **React 19**, **TypeScript**, and **Tailwind CSS v4**.
 
 Design language follows the DeepSeek-style system extracted in
@@ -44,7 +45,8 @@ src/components/
   playground/       request panel, thread, metrics card, trace, session panel
   pages/            requests inspector, cache control room, providers status
 src/lib/
-  gateway.ts        typed browser client (chat + SSE streaming + evidence headers)
+  gateway.ts        typed browser client (chat + SSE streaming + evidence headers
+                    + GET /v1/usage tenant slice)
   canonical.ts      payload builder + canonical JSON + sha256 (byte-parity tested
                     against the gateway's real src/domain/normalize.ts)
   store.tsx         app state: chats, session stats, connection, 30 s health/metrics poll
@@ -60,7 +62,7 @@ gateway reports.
 ## Testing
 
 ```bash
-npm test             # 70 tests — canonical parity, SSE parsing, stats, components
+npm test             # 79 tests — canonical parity, SSE parsing, stats, components
 ```
 
 The suite is hermetic (no network, no real timers). Contract tests lock the exact

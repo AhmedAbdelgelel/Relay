@@ -18,6 +18,7 @@ import type {
   MetricsSnapshot,
   ProviderStatus,
   StreamChunk,
+  TenantUsage,
   Usage,
 } from "./types";
 
@@ -230,6 +231,25 @@ export class GatewayClient {
     });
     if (!res.ok) throw errorFrom(res.status, null, null);
     return (await res.json()) as ProviderStatus[];
+  }
+
+  /**
+   * Per-tenant usage (`GET /v1/usage`) — the registered-lane story: your own
+   * requests, hits, misses and avoided spend. The anonymous lane has no tenant
+   * slice, so without a key this returns null without a request; a rejected or
+   * revoked key (401/403) reads as unavailable instead of a thrown error — the
+   * Overview shows an honest empty state, not an error banner on a metric poll.
+   */
+  async usage(signal?: AbortSignal): Promise<TenantUsage | null> {
+    if (!this.apiKey) return null;
+    const res = await fetch(this.url("/v1/usage"), {
+      headers: this.headers(),
+      signal,
+      cache: "no-store",
+    });
+    if (res.status === 401 || res.status === 403) return null;
+    if (!res.ok) throw errorFrom(res.status, null, null);
+    return (await res.json()) as TenantUsage;
   }
 
   async chat(body: ChatPayload, init: ChatInit = {}): Promise<ChatResult> {
