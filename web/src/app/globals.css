@@ -26,10 +26,10 @@
   --line: rgba(0, 0, 0, 0.08);
   --line-strong: rgba(0, 0, 0, 0.16);
 
-  /* text */
+  /* text — ink-3 must clear WCAG AA (≥4.5:1) on canvas and on soft chips */
   --ink: #1e232c;
-  --ink-2: rgba(0, 0, 0, 0.6);
-  --ink-3: rgba(0, 0, 0, 0.45);
+  --ink-2: rgba(0, 0, 0, 0.65);
+  --ink-3: rgba(0, 0, 0, 0.56);
   --placeholder: #8691a1;
 
   /* accent — focus rings, active nav icon tint, links (used sparingly) */
@@ -83,8 +83,8 @@
   --line-strong: rgba(255, 255, 255, 0.16);
 
   --ink: #e7e9ec;
-  --ink-2: rgba(255, 255, 255, 0.6);
-  --ink-3: rgba(255, 255, 255, 0.45);
+  --ink-2: rgba(255, 255, 255, 0.65);
+  --ink-3: rgba(255, 255, 255, 0.5);
   --placeholder: rgba(255, 255, 255, 0.32);
 
   --accent: #4d6bfe;
@@ -132,8 +132,8 @@
     --line-strong: rgba(255, 255, 255, 0.16);
 
     --ink: #e7e9ec;
-    --ink-2: rgba(255, 255, 255, 0.6);
-    --ink-3: rgba(255, 255, 255, 0.45);
+    --ink-2: rgba(255, 255, 255, 0.65);
+    --ink-3: rgba(255, 255, 255, 0.5);
     --placeholder: rgba(255, 255, 255, 0.32);
 
     --accent: #4d6bfe;
