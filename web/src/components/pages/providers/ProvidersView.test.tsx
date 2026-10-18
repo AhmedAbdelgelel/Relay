@@ -75,6 +75,7 @@ describe("ProvidersView add provider", () => {
     const stub = installFetch([
       ["/providers", () => jsonResponse(PROVIDERS)],
       ["/v1/register", () => jsonResponse(REGISTER, 201)],
+      ["/v1/connections", () => jsonResponse({ tenant_id: "t-9", connections: [] })],
     ]);
 
     render(
@@ -105,5 +106,102 @@ describe("ProvidersView add provider", () => {
     const call = stub.mock.calls.find((entry) => String(entry[0]).endsWith("/v1/register"));
     const body = JSON.parse(String(call?.[1]?.body)) as { provider: string };
     expect(body.provider).toBe("openai");
+  });
+});
+
+describe("ProvidersView connect a provider", () => {
+  it("connects a provider with your own key + URL, then shows the your-key row", async () => {
+    window.localStorage.setItem(
+      "llm-gateway-api-v1",
+      JSON.stringify({ baseUrl: "", apiKey: "lg_web_test_key" }),
+    );
+    const stored: unknown[] = [];
+    const stub = installFetch([
+      ["/providers", () => jsonResponse(PROVIDERS)],
+      [
+        "/v1/connections",
+        (init) => {
+          if (init?.method === "POST") {
+            const body = JSON.parse(String(init.body)) as { provider: string; base_url?: string };
+            const endpoint = body.base_url ?? "https://gateway-default.example/v1";
+            const row = {
+              provider: body.provider,
+              base_url: body.base_url ?? null,
+              endpoint,
+              created_at: "2026-10-18T00:00:00.000Z",
+            };
+            stored.push(row);
+            return jsonResponse({ ...row, connected: true }, 201);
+          }
+          return jsonResponse({ tenant_id: "t-9", connections: stored });
+        },
+      ],
+    ]);
+
+    render(
+      <AppProvider>
+        <ProvidersView />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("live · 1/2 configured · default openai")).toBeVisible();
+
+    // The anthropic card offers "your key" connect; clicking preselects the form.
+    fireEvent.click(within(providerCard("anthropic")).getByRole("button", { name: "Connect" }));
+    expect((document.getElementById("cp-provider") as HTMLSelectElement).value).toBe("anthropic");
+
+    fireEvent.change(document.getElementById("cp-key") as HTMLInputElement, {
+      target: { value: "sk-tenant-anthropic" },
+    });
+    fireEvent.change(document.getElementById("cp-upstream") as HTMLInputElement, {
+      target: { value: "https://own.anthropic.example/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect provider" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Connected");
+
+    const call = stub.mock.calls.find(
+      (entry) => String(entry[0]).endsWith("/v1/connections") && entry[1]?.method === "POST",
+    );
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      provider: "anthropic",
+      provider_key: "sk-tenant-anthropic",
+      base_url: "https://own.anthropic.example/v1",
+    });
+
+    // The refresh after connecting renders the stored credential on the card.
+    await waitFor(() => {
+      expect(
+        within(providerCard("anthropic")).getByText("https://own.anthropic.example/v1"),
+      ).toBeVisible();
+    });
+    expect(within(providerCard("anthropic")).getByText("connected")).toBeVisible();
+  });
+
+  it("keeps the connect form honest: an empty key shows a local error, no request", async () => {
+    window.localStorage.setItem(
+      "llm-gateway-api-v1",
+      JSON.stringify({ baseUrl: "", apiKey: "lg_web_test_key" }),
+    );
+    const stub = installFetch([
+      ["/providers", () => jsonResponse(PROVIDERS)],
+      ["/v1/connections", () => jsonResponse({ tenant_id: "t-9", connections: [] })],
+    ]);
+
+    render(
+      <AppProvider>
+        <ProvidersView />
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText("live · 1/2 configured · default openai")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Connect provider" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Paste the provider API key");
+    expect(
+      stub.mock.calls.some(
+        (entry) => entry[1]?.method === "POST" && String(entry[0]).endsWith("/v1/connections"),
+      ),
+    ).toBe(false);
   });
 });

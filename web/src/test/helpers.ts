@@ -10,7 +10,7 @@ import type { Mock } from "vitest";
 
 export type FetchMock = Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>;
 
-type RouteHandler = () => Response | Promise<Response>;
+type RouteHandler = (init?: RequestInit) => Response | Promise<Response>;
 
 /** URL as string for a fetch input, whatever shape the caller used. */
 export function urlOf(input: RequestInfo | URL): string {
@@ -26,10 +26,10 @@ export function urlOf(input: RequestInfo | URL): string {
  * updates or warnings.
  */
 export function installFetch(routes: Array<[string | RegExp, RouteHandler]>): FetchMock {
-  const stub: FetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+  const stub: FetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = urlOf(input);
     for (const [match, make] of routes) {
-      if (typeof match === "string" ? url.endsWith(match) : match.test(url)) return make();
+      if (typeof match === "string" ? url.endsWith(match) : match.test(url)) return make(init);
     }
     return new Promise<Response>(() => {
       /* intentionally never settles */
