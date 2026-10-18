@@ -105,24 +105,18 @@ export class TargetBreaker {
     this.failures.set(name, n);
     return false;
   }
-
-  openCount(): number {
-    return this.openedAt.size;
-  }
 }
 
 export interface ChainResult<T> {
   result: T;
   serving: FallbackTarget;
   fallback: boolean;
-  attempts: number;
 }
 
 export interface ChainOpts<T> {
   breaker: TargetBreaker;
   policy?: FallbackPolicy;
   signal?: AbortSignal;
-  onAttempt?: () => void;
   onFallback?: (from: string, to: string) => void;
   onBreakerOpen?: () => void;
   onBreakerClose?: () => void;
@@ -135,7 +129,6 @@ export async function executeChain<T>(targets: FallbackTarget[], opts: ChainOpts
     throw new GatewayError(502, "provider_error", "no serving target available.", false);
   }
   let lastError: GatewayError | undefined;
-  let attempts = 0;
   let movedOn = false;
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i]!;
@@ -146,12 +139,10 @@ export async function executeChain<T>(targets: FallbackTarget[], opts: ChainOpts
     }
     for (let attempt = 0; ; attempt++) {
       if (opts.signal?.aborted) throw abortedError();
-      attempts++;
-      opts.onAttempt?.();
       try {
         const result = await opts.call(t, opts.signal);
         if (opts.breaker.recordSuccess(t.name)) opts.onBreakerClose?.();
-        return { result, serving: t, fallback: i > 0, attempts };
+        return { result, serving: t, fallback: i > 0 };
       } catch (err) {
         const gw = err instanceof GatewayError ? err : toGatewayError(t.name, err);
         if (opts.signal?.aborted) throw abortedError();
