@@ -11,6 +11,7 @@ import {
   IconPlus,
   IconProviders,
   IconRequests,
+  IconSettings,
   IconTrash,
 } from "@/components/ui/icons";
 import { ConnectionMenu } from "./ConnectionMenu";
@@ -22,6 +23,7 @@ const NAV = [
   { href: "/requests", label: "Requests", Icon: IconRequests },
   { href: "/cache", label: "Cache", Icon: IconCache },
   { href: "/providers", label: "Providers", Icon: IconProviders },
+  { href: "/settings", label: "Settings", Icon: IconSettings },
 ] as const;
 
 function isActive(pathname: string, href: string): boolean {

@@ -9,12 +9,14 @@
  * keeps the last successful list rather than clearing it.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
-import { Card, CardTitle } from "@/components/ui";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Button, Card, CardTitle } from "@/components/ui";
+import { IconRefresh } from "@/components/ui/icons";
 import { PageShell } from "@/components/pages/shared/PageShell";
 import { GatewayClient } from "@/lib/gateway";
 import { useAppStore } from "@/lib/store";
 import type { ProviderStatus } from "@/lib/types";
+import { AddProviderCard } from "./AddProviderCard";
 import { PROVIDER_CATALOG } from "./catalog";
 import { ProviderCard, type ProviderCardData, type ProviderRenderState } from "./ProviderCard";
 
@@ -26,6 +28,7 @@ export function ProvidersView() {
   const { connection, offline } = useAppStore();
   const [live, setLive] = useState<ProviderStatus[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +48,9 @@ export function ProvidersView() {
       cancelled = true;
       controller.abort();
     };
-  }, [connection]);
+  }, [connection, reload]);
+
+  const refresh = useCallback(() => setReload((tick) => tick + 1), []);
 
   const unreachable = failed || offline;
   const entries: ProviderCardData[] =
@@ -67,8 +72,14 @@ export function ProvidersView() {
       title="Providers"
       sub="One integration per provider · canonical translation at the edge"
       actions={
-        <span aria-live="polite" className="font-mono text-[12px] text-ink-3">
-          {liveLine}
+        <span className="flex items-center gap-3">
+          <span aria-live="polite" className="font-mono text-[12px] text-ink-3">
+            {liveLine}
+          </span>
+          <Button size="sm" onClick={refresh} disabled={live === null && !unreachable}>
+            <IconRefresh size={12} />
+            Refresh
+          </Button>
         </span>
       }
     >
@@ -91,6 +102,8 @@ export function ProvidersView() {
           </li>
         ))}
       </ul>
+
+      <AddProviderCard live={live} onRegistered={refresh} />
 
       <Card>
         <CardTitle>How routing works</CardTitle>
