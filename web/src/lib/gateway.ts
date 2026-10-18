@@ -18,6 +18,7 @@ import type {
   MetricsSnapshot,
   ProviderStatus,
   StreamChunk,
+  RegisterResult,
   TenantUsage,
   Usage,
 } from "./types";
@@ -250,6 +251,27 @@ export class GatewayClient {
     if (res.status === 401 || res.status === 403) return null;
     if (!res.ok) throw errorFrom(res.status, null, null);
     return (await res.json()) as TenantUsage;
+  }
+
+  /**
+   * POST /v1/register (the product's open route): validate provider, store the
+   * upstream key encrypted, issue a gateway key that is shown exactly once.
+   * Registering again creates a NEW tenant — that is the contract, not churn.
+   */
+  async register(
+    body: { name: string; provider: string; providerKey: string },
+    signal?: AbortSignal,
+  ): Promise<RegisterResult> {
+    const res = await fetch(this.url("/v1/register"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: body.name, provider: body.provider, provider_key: body.providerKey }),
+      signal,
+    });
+    const json = (await res.json().catch(() => null)) as RegisterResult | null;
+    if (json === null) throw errorFrom(res.status, null, null);
+    if (!res.ok) throw errorFrom(res.status, json, null);
+    return json;
   }
 
   async chat(body: ChatPayload, init: ChatInit = {}): Promise<ChatResult> {

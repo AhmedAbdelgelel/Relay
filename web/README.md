@@ -40,7 +40,8 @@ setup needed, no keys in the client bundle.
 ```
 src/app/            routes: / (overview), /playground, /requests, /cache, /providers
 src/components/
-  shell/            sidebar, topbar, connection menu (gateway URL + API key)
+  shell/            sidebar, topbar, connection menu (gateway URL + API key +
+                    register-in-place via POST /v1/register)
   ui/               Card, StatCard, Badge, Button, Table, EmptyState, Kbd, icons
   playground/       request panel, thread, metrics card, trace, session panel
   pages/            requests inspector, cache control room, providers status
@@ -62,7 +63,7 @@ gateway reports.
 ## Testing
 
 ```bash
-npm test             # 79 tests — canonical parity, SSE parsing, stats, components
+npm test             # 83 tests — canonical parity, SSE parsing, stats, components
 ```
 
 The suite is hermetic (no network, no real timers). Contract tests lock the exact

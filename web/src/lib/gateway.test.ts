@@ -298,3 +298,46 @@ describe("GET /v1/usage (tenant slice)", () => {
     expect(usage).toBeNull();
   });
 });
+
+describe("POST /v1/register", () => {
+  const REGISTER_BODY = {
+    tenant_id: "804baf34-fc6a-48b4-ac67-0b5a18c81726",
+    provider: "mock",
+    key: "lg_abc1234567890abcdefghij",
+    key_prefix: "lg_abc12",
+  };
+
+  it("201: posts the wire body and no Authorization header (open route)", async () => {
+    fetchStub.mockImplementation(() => Promise.resolve(jsonResponse(REGISTER_BODY, 201)));
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "lg_existing" });
+    const result = await client.register({
+      name: "playground",
+      provider: "mock",
+      providerKey: "unused",
+    });
+
+    expect(result).toEqual(REGISTER_BODY);
+    const [input, init] = fetchStub.mock.calls[0];
+    expect(String(input).endsWith("/v1/register")).toBe(true);
+    const headers = new Headers(init?.headers as HeadersInit);
+    expect(headers.get("Authorization")).toBeNull();
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect(String(init?.body)).toBe(
+      JSON.stringify({ name: "playground", provider: "mock", provider_key: "unused" }),
+    );
+  });
+
+  it("400 validation/unknown-provider maps into a GatewayError with the gateway message", async () => {
+    fetchStub.mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({ error: { code: "validation_error", message: "provider nope" } }, 400),
+      ),
+    );
+
+    const client = new GatewayClient({ baseUrl: "", apiKey: "" });
+    await expect(
+      client.register({ name: "p", provider: "nope", providerKey: "" }),
+    ).rejects.toMatchObject({ status: 400, message: "provider nope" });
+  });
+});

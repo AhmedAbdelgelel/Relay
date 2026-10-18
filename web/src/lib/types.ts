@@ -24,6 +24,14 @@ export interface TenantUsage {
   avg_latency_ms: number;
 }
 
+/** POST /v1/register — 201 payload; the key is shown to the caller exactly once. */
+export interface RegisterResult {
+  tenant_id: string;
+  provider: string;
+  key: string;
+  key_prefix: string;
+}
+
 /** Connection to a gateway. Empty `baseUrl` = same origin (the Next rewrites). */
 export interface Connection {
   baseUrl: string;
