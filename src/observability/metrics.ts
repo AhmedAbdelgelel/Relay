@@ -55,40 +55,6 @@ interface TenantUsage {
   latency_samples: number;
 }
 
-const ZERO: MetricsSnapshot = {
-  requests_total: 0,
-  exact_hits: 0,
-  exact_misses: 0,
-  singleflight_coalesced: 0,
-  singleflight_leaders: 0,
-  provider_requests: 0,
-  provider_errors: 0,
-  cache_lookup_failed: 0,
-  cache_write_failed: 0,
-  semantic_hits: 0,
-  semantic_misses: 0,
-  semantic_errors: 0,
-  fallback_count: 0,
-  breaker_open: 0,
-  tokens_in: 0,
-  tokens_out: 0,
-  estimated_cost_saved: 0,
-  semantic_hist_lt_090: 0,
-  semantic_hist_090_092: 0,
-  semantic_hist_092_095: 0,
-  semantic_hist_gte_095: 0,
-  auth_rejects_total: 0,
-  semantic_lookups: 0,
-  avg_semantic_score: 0,
-  cache_lookups: 0,
-  cache_latency_ms_total: 0,
-  avg_cache_lookup_ms: 0,
-  provider_latency_ms_total: 0,
-  avg_provider_ms: 0,
-  hit_rate: 0,
-  provider_calls_avoided: 0,
-};
-
 export type CounterName =
   | "requests_total"
   | "exact_hits"
@@ -263,5 +229,3 @@ export class GatewayMetrics {
 }
 
 export const metrics = new GatewayMetrics();
-
-export const __zeroSnapshotForTests = ZERO;

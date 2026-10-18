@@ -10,10 +10,6 @@ export class InMemoryCache implements CacheRepository {
     this.maxEntries = Number.isFinite(m) && m > 0 ? Math.floor(m) : 1000;
   }
 
-  get size(): number {
-    return this.store.size;
-  }
-
   async get(key: string): Promise<string | null> {
     const e = this.store.get(key);
     if (!e) return null;

@@ -38,10 +38,6 @@ export class InMemoryVectorStore implements SemanticCacheStore {
     this.maxEntries = Number.isFinite(m) && m > 0 ? Math.floor(m) : 2000;
   }
 
-  get size(): number {
-    return this.rows.length;
-  }
-
   private sweep(now = Date.now()): void {
     if (this.rows.some((r) => now > r.expiresAt)) {
       this.rows = this.rows.filter((r) => now <= r.expiresAt);
