@@ -3,6 +3,7 @@ import { createServer, type IncomingHttpHeaders, type ServerResponse } from "nod
 import type { AddressInfo } from "node:net";
 import Fastify, { type FastifyInstance } from "fastify";
 import { registerChatRoutes } from "../../src/api/routes/chat.js";
+import { registerConnectionsRoutes } from "../../src/api/routes/connections.js";
 import { registerPlayground } from "../../src/api/routes/playground.js";
 import { registerProviderRoutes } from "../../src/api/routes/providers.js";
 import { registerRegisterRoutes } from "../../src/api/routes/register.js";
@@ -100,6 +101,7 @@ export function makeApp(opts: AppOptions = {}): BuiltApp {
   };
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
   registerRegisterRoutes(app, auth);
+  registerConnectionsRoutes(app, cfg, auth);
   registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers ?? new Map([[provider.name, provider]]));
   registerPlayground(app);
@@ -207,12 +209,14 @@ export class LeakyVectorStore extends InMemoryVectorStore {
 
 export interface ScriptedOpts {
   capabilities?: Partial<ProviderCapabilities>;
+  configured?: boolean;
   chat?: (req: ChatRequest, signal: AbortSignal) => Promise<ChatResponse>;
   stream?: (req: ChatRequest, signal: AbortSignal) => AsyncIterable<StreamChunk>;
 }
 
 export class ScriptedProvider implements ProviderAdapter {
   readonly name: string;
+  readonly configured: boolean;
   readonly capabilities: ProviderCapabilities;
   calls = 0;
   streamCalls = 0;
@@ -222,6 +226,7 @@ export class ScriptedProvider implements ProviderAdapter {
 
   constructor(name: string, opts: ScriptedOpts = {}) {
     this.name = name;
+    this.configured = opts.configured ?? true;
     this.capabilities = {
       chat: true,
       streaming: true,

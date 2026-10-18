@@ -370,6 +370,7 @@ describe("upstream-key resolution", () => {
       name: "down-cred",
       save: async () => ({ status: "unavailable", reason: "db down" }),
       get: async () => ({ status: "unavailable", reason: "db down" }),
+      list: async () => ({ status: "unavailable", reason: "db down" }),
       remove: async () => ({ status: "unavailable", reason: "db down" }),
       close: async () => undefined,
     };

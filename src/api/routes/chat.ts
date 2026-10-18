@@ -20,7 +20,7 @@ import { metrics } from "../../observability/metrics.js";
 import { isReusableSemantic, systemFingerprint, POLICY_VERSION } from "../../policy/reuse.js";
 import type { ProviderAdapter } from "../../providers/ProviderAdapter.js";
 import { missingCapabilities } from "../../providers/capabilities.js";
-import { providerForModel, providerWithKey } from "../../providers/factory.js";
+import { providerForModel, providerRequiresKey, providerWithKey, routeProviderName } from "../../providers/factory.js";
 import { buildChain, executeChain, TargetBreaker, backoffDelayMs, sleepAbortable, DEFAULT_FALLBACK_POLICY } from "../../routing/fallback.js";
 
 const BodySchema = z.object({
@@ -87,21 +87,61 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     const tenant = registered ? auth.tenant : "";
     const active: ProviderAdapter = deps.providers ? providerForModel(req.model, deps.providers, provider) : provider;
 
-    const mismatch = laneProviderMismatch(auth, active.name);
+    // Per-tenant provider connections (BYO key + URL, POST /v1/connections):
+    // resolve the credential for the routed provider BEFORE the key-binding
+    // check, so a connected provider is usable even when the operator never
+    // configured it from env. Without a providers map the gateway is
+    // single-provider: prefix routing does not apply and the base adapter's
+    // name is the only possible target.
+    const routedName = deps.providers ? routeProviderName(req.model) : null;
+    const credentialName = routedName ?? active.name;
+    let tenantKey: string | null = null;
+    let tenantBaseUrl: string | null = null;
+    if (registered) {
+      const cred = await deps.auth.credentials.get(auth.tenant, credentialName);
+      if (cred.status === "ok") {
+        tenantKey = cred.providerKey;
+        tenantBaseUrl = cred.baseUrl;
+      } else if (cred.status === "unavailable") {
+        log({ request_id: requestId, provider: credentialName, credential: "unavailable", error: cred.reason });
+      }
+    }
+
+    let serving: ProviderAdapter;
+    if (registered) {
+      serving = tenantKey !== null ? providerWithKey(credentialName, tenantKey, cfg, tenantBaseUrl) : active;
+    } else {
+      serving = providerWithKey(routedName ?? active.name, auth.providerKey, cfg);
+    }
+
+    // A routed upstream that needs a key but has none (tenant not connected,
+    // env unset): fail with an actionable 401 instead of a mystery 403/502.
+    // This precedes the binding check because connecting a key is the fix for
+    // both errors — the 403 below only applies when a key does exist (env).
+    if (providerRequiresKey(serving.name) && !serving.configured) {
+      metrics.inc("auth_rejects_total");
+      const message = registered
+        ? `provider '${serving.name}' has no key for this tenant: connect your own key (POST /v1/connections with your gateway key) or have the gateway operator set its env key`
+        : `provider '${serving.name}' has no key: send x-provider-key with your upstream key (anonymous try-out lane)`;
+      log({ request_id: requestId, provider: serving.name, status: 401, error_code: "provider_key_missing" });
+      return reply.status(401).send({ error: { code: "provider_key_missing", message, request_id: requestId } });
+    }
+
+    const mismatch = laneProviderMismatch(auth, serving.name, tenantKey !== null);
     if (mismatch) {
       metrics.inc("auth_rejects_total");
-      log({ request_id: requestId, provider: active.name, status: mismatch.status, error_code: mismatch.code });
+      log({ request_id: requestId, provider: serving.name, status: mismatch.status, error_code: mismatch.code });
       return reply.status(mismatch.status).send({ error: { code: mismatch.code, message: mismatch.message, request_id: requestId } });
     }
 
-    const missing = missingCapabilities(req, active.capabilities);
+    const missing = missingCapabilities(req, serving.capabilities);
     if (missing.length > 0) {
-      const msg = `provider '${active.name}' does not support: ${missing.join(", ")}`;
-      log({ request_id: requestId, provider: active.name, status: 400, error_code: "unsupported_capability" });
+      const msg = `provider '${serving.name}' does not support: ${missing.join(", ")}`;
+      log({ request_id: requestId, provider: serving.name, status: 400, error_code: "unsupported_capability" });
       return reply.status(400).send({ error: { code: "unsupported_capability", message: msg, request_id: requestId } });
     }
 
-    const { key: cacheKey, hash: cacheHash } = buildExactCacheKey(active.name, req);
+    const { key: cacheKey, hash: cacheHash } = buildExactCacheKey(serving.name, req);
     reply.header("x-cache-hash", cacheHash);
 
     const ctrl = new AbortController();
@@ -112,14 +152,6 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     let hijacked = false;
 
     try {
-      let serving: ProviderAdapter = active;
-      if (registered) {
-        const cred = await deps.auth.credentials.get(auth.tenant, active.name);
-        if (cred.status === "ok") serving = providerWithKey(active.name, cred.providerKey, cfg);
-        else if (cred.status === "unavailable") log({ request_id: requestId, provider: active.name, credential: "unavailable", error: cred.reason });
-      } else {
-        serving = providerWithKey(active.name, auth.providerKey, cfg);
-      }
       const chain = registered ? buildChain(serving, deps.providers) : buildChain(serving);
       const primary = chain[0]!.adapter;
 
@@ -183,11 +215,11 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             queryEmbedding = await deps.embedder!.embed(queryText, ctrl.signal);
             const candidates = await deps.semanticStore!.findSimilar(
               queryEmbedding,
-              { tenant, provider: active.name, model: req.model },
+              { tenant, provider: serving.name, model: req.model },
               { threshold: cfg.semanticThreshold, topK: cfg.semanticTopK },
             );
             for (const hit of candidates) {
-              const decision = isReusableSemantic(req, hit, { provider: active.name, threshold: cfg.semanticThreshold, tenant });
+              const decision = isReusableSemantic(req, hit, { provider: serving.name, threshold: cfg.semanticThreshold, tenant });
               if (!decision.reusable) continue;
               const latency = Date.now() - start;
               metrics.inc("semantic_hits");
@@ -199,12 +231,12 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
                 metrics.observeSaved(hit.usage.prompt_tokens, hit.usage.completion_tokens, cfg.savedUsdPer1kTokens);
               }
               await deps.semanticStore!.recordHit(hit.id).catch(() => undefined);
-              reply.header("x-provider", active.name);
+              reply.header("x-provider", serving.name);
               reply.header("x-latency-ms", String(latency));
               reply.header("x-cache", "SEMANTIC_HIT");
               reply.header("x-semantic-similarity", hit.similarity.toFixed(4));
               reply.header("x-coalesced", "false");
-              log({ request_id: requestId, provider: active.name, status: 200, latency_ms: latency, stream: false, cache: "semantic-hit", similarity: hit.similarity });
+              log({ request_id: requestId, provider: serving.name, status: 200, latency_ms: latency, stream: false, cache: "semantic-hit", similarity: hit.similarity });
               return reply.send({
                 id: `semcached-${Date.now()}`,
                 model: req.model,
@@ -215,7 +247,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             metrics.inc("semantic_misses");
           } catch (err) {
             metrics.inc("semantic_errors");
-            log({ request_id: requestId, provider: active.name, cache: "semantic-failed-miss", error: (err as Error)?.message ?? String(err) });
+            log({ request_id: requestId, provider: serving.name, cache: "semantic-failed-miss", error: (err as Error)?.message ?? String(err) });
             queryEmbedding = undefined;
           }
         }
@@ -223,7 +255,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
           ? cacheKey
           : `${cacheKey}#anon#${createHash("sha256").update(auth.providerKey).digest("hex").slice(0, 16)}`;
         const wasCoalesced = flight.has(flightKey);
-        let servingName = active.name;
+        let servingName = serving.name;
         let didFallback = false;
         const shared = flight.run(flightKey, async () => {
           metrics.inc("provider_requests");
@@ -325,7 +357,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
         "x-request-id": requestId,
-        "x-provider": active.name,
+        "x-provider": serving.name,
         "x-cache": "BYPASS",
         "x-cache-hash": cacheHash, // D3: the key this stream bypassed
         "x-lane": auth.lane, // T26: reply evidence survives the hijack
@@ -349,7 +381,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       let ttftMs = 0;
       let usage: TokenUsage | undefined;
       const normalizer = new StreamingResponseNormalizer();
-      let servingName = active.name;
+      let servingName = serving.name;
       let streamError: unknown;
       let attempted = false;
       let movedOn = false;
@@ -433,8 +465,8 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       if (registered) metrics.observeTenantLatency(tenant, Date.now() - start);
       return;
     } catch (err) {
-      const gw = err instanceof GatewayError ? err : toGatewayError(active.name, err);
-      log({ request_id: requestId, provider: active.name, status: gw.status, latency_ms: Date.now() - start, stream: req.stream, error_code: gw.code });
+      const gw = err instanceof GatewayError ? err : toGatewayError(serving.name, err);
+      log({ request_id: requestId, provider: serving.name, status: gw.status, latency_ms: Date.now() - start, stream: req.stream, error_code: gw.code });
       if (reply.raw.headersSent) {
         try { reply.raw.end(); } catch { /* already closed */ }
         return reply;
@@ -448,7 +480,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
               "content-type": "application/json; charset=utf-8",
               "content-length": String(Buffer.byteLength(body)),
               "x-request-id": requestId,
-              "x-provider": active.name,
+              "x-provider": serving.name,
               "x-cache": "BYPASS",
               "x-cache-hash": cacheHash,
               "x-lane": auth.lane, // T26: pre-first-token failures still carry lane evidence

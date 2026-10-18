@@ -14,8 +14,10 @@ import {
   type VerifyApiKeyResult,
 } from "../../src/auth/ApiKeyStore.js";
 import { createAuthStoresFromEnv } from "../../src/auth/factory.js";
+import { CredentialCipher } from "../../src/auth/credentialCipher.js";
 import { InMemoryApiKeyStore } from "../../src/auth/InMemoryApiKeyStore.js";
-import { migrateAuthTables, PgApiKeyStore } from "../../src/auth/PgAuthStores.js";
+import { InMemoryCredentialStore } from "../../src/auth/InMemoryCredentialStore.js";
+import { migrateAuthTables, PgApiKeyStore, PgCredentialStore } from "../../src/auth/PgAuthStores.js";
 import { loadConfig } from "../../src/infrastructure/config.js";
 
 type Seen = { text: string; params?: unknown[] };
@@ -365,5 +367,87 @@ describe("auth factory (T24)", () => {
     expect(record.tenant).toBe("acme");
     await stores.close();
     expect(await stores.apiKeys.verify("lg_seedkey123")).toEqual({ status: "invalid" });
+  });
+});
+
+describe("CredentialStore contract — connections (BYO key + URL)", () => {
+  const cipher = new CredentialCipher("contract-secret");
+
+  it("memory: save/get/list round-trips the URL and replaces on reconnect", async () => {
+    const store = new InMemoryCredentialStore(cipher);
+    expect(await store.get("t1", "openrouter")).toEqual({ status: "not_found" });
+
+    await store.save("t1", "openrouter", "sk-a", "http://localhost:4300/v1");
+    expect(await store.get("t1", "openrouter")).toEqual({
+      status: "ok",
+      providerKey: "sk-a",
+      baseUrl: "http://localhost:4300/v1",
+    });
+
+    // A reconnect without a URL resets to the gateway endpoint (no stale URL).
+    await store.save("t1", "openrouter", "sk-b");
+    expect(await store.get("t1", "openrouter")).toEqual({ status: "ok", providerKey: "sk-b", baseUrl: null });
+
+    await store.save("t1", "openai", "sk-c", null);
+    const listed = await store.list("t1");
+    if (listed.status !== "ok") throw new Error(`expected ok, got ${listed.status}`);
+    expect(listed.connections.map((c) => c.provider)).toEqual(["openai", "openrouter"]);
+    expect(listed.connections[0]!.baseUrl).toBeNull();
+    expect(JSON.stringify(listed.connections)).not.toContain("sk-");
+
+    await store.remove("t1", "openai");
+    const after = await store.list("t1");
+    if (after.status !== "ok") throw new Error(`expected ok, got ${after.status}`);
+    expect(after.connections.map((c) => c.provider)).toEqual(["openrouter"]);
+  });
+
+  it("pg: save upserts enc_key + base_url; get/list map rows; outages never throw", async () => {
+    const saveDb = fakeDb();
+    await new PgCredentialStore(saveDb, cipher).save("t9", "openai", "sk-live", "http://127.0.0.1:9/v1");
+    const insert = saveDb.seen[0]!;
+    expect(insert.text).toContain("INSERT INTO provider_credentials (tenant_id, provider, enc_key, base_url)");
+    expect(insert.text).toContain("base_url = EXCLUDED.base_url");
+    expect(insert.params?.[0]).toBe("t9");
+    expect(insert.params?.[1]).toBe("openai");
+    expect(insert.params?.[2]).not.toBe("sk-live"); // encrypted at rest
+    expect(insert.params?.[3]).toBe("http://127.0.0.1:9/v1");
+
+    const noUrlDb = fakeDb();
+    await new PgCredentialStore(noUrlDb, cipher).save("t9", "ollama", "k");
+    expect(noUrlDb.seen[0]!.params?.[3]).toBeNull();
+
+    const getDb = fakeDb([{ enc_key: cipher.encrypt("sk-pg"), base_url: "https://proxy.internal/v1" }]);
+    expect(await new PgCredentialStore(getDb, cipher).get("t9", "gemini")).toEqual({
+      status: "ok",
+      providerKey: "sk-pg",
+      baseUrl: "https://proxy.internal/v1",
+    });
+    expect(getDb.seen[0]!.text).toContain("base_url");
+
+    const listDb = fakeDb([{ provider: "openai", base_url: null, created_at: new Date("2026-02-02T00:00:00Z") }]);
+    expect(await new PgCredentialStore(listDb, cipher).list("t9")).toEqual({
+      status: "ok",
+      connections: [{ provider: "openai", baseUrl: null, createdAt: "2026-02-02T00:00:00.000Z" }],
+    });
+
+    const down = () =>
+      fakeDb([], {
+        query: async () => {
+          throw new Error("db down");
+        },
+      });
+    expect((await new PgCredentialStore(down(), cipher).save("t", "p", "k")).status).toBe("unavailable");
+    expect((await new PgCredentialStore(down(), cipher).get("t", "p")).status).toBe("unavailable");
+    expect((await new PgCredentialStore(down(), cipher).list("t")).status).toBe("unavailable");
+    expect((await new PgCredentialStore(down(), cipher).remove("t", "p")).status).toBe("unavailable");
+  });
+
+  it("boot migration adds base_url for existing provider_credentials tables", async () => {
+    const db = fakeDb();
+    await migrateAuthTables(db);
+    const all = db.seen.map((s) => s.text).join("\n");
+    expect(all).toContain("CREATE TABLE IF NOT EXISTS provider_credentials");
+    expect(all).toContain("base_url TEXT NULL");
+    expect(all).toContain("ALTER TABLE provider_credentials ADD COLUMN IF NOT EXISTS base_url TEXT NULL");
   });
 });

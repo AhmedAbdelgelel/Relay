@@ -8,6 +8,7 @@ export type MockFailure = "rate_limited" | "server_error" | null;
 
 export class MockProvider implements ProviderAdapter {
   readonly name = "mock";
+  readonly configured = true;
   readonly capabilities: ProviderCapabilities = {
     chat: true,
     streaming: true,

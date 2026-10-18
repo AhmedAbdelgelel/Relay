@@ -51,6 +51,7 @@ function downCredentials(): CredentialStore {
     name: "down-cred",
     save: async () => ({ status: "unavailable", reason }),
     get: async () => ({ status: "unavailable", reason }),
+    list: async () => ({ status: "unavailable", reason }),
     remove: async () => ({ status: "unavailable", reason }),
     close: async () => undefined,
   };
@@ -366,11 +367,12 @@ describe("register + usage", () => {
     const innerCred = new InMemoryCredentialStore(new CredentialCipher("e2e-dev-secret"));
     const spyCred: CredentialStore = {
       name: innerCred.name,
-      save: (t, p, k) => {
+      save: (t, p, k, u) => {
         saves++;
-        return innerCred.save(t, p, k);
+        return innerCred.save(t, p, k, u);
       },
       get: (t, p) => innerCred.get(t, p),
+      list: (t) => innerCred.list(t),
       remove: (t, p) => innerCred.remove(t, p),
       close: () => innerCred.close(),
     };

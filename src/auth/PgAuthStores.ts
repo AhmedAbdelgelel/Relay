@@ -16,9 +16,11 @@ import {
 } from "./ApiKeyStore.js";
 import type {
   CredentialGetResult,
+  CredentialListResult,
   CredentialRemoveResult,
   CredentialSaveResult,
   CredentialStore,
+  ProviderConnection,
 } from "./CredentialStore.js";
 import type { CredentialCipher } from "./credentialCipher.js";
 
@@ -177,6 +179,7 @@ export class PgApiKeyStore implements ApiKeyStore {
 
 interface CredentialRow {
   enc_key: string;
+  base_url: string | null;
 }
 
 export class PgCredentialStore implements CredentialStore {
@@ -187,14 +190,19 @@ export class PgCredentialStore implements CredentialStore {
     private readonly cipher: CredentialCipher,
   ) {}
 
-  async save(tenant: string, provider: string, providerKey: string): Promise<CredentialSaveResult> {
+  async save(
+    tenant: string,
+    provider: string,
+    providerKey: string,
+    baseUrl?: string | null,
+  ): Promise<CredentialSaveResult> {
     try {
       await this.db.query(
-        `INSERT INTO provider_credentials (tenant_id, provider, enc_key)
-         VALUES ($1, $2, $3)
+        `INSERT INTO provider_credentials (tenant_id, provider, enc_key, base_url)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT (tenant_id, provider)
-         DO UPDATE SET enc_key = EXCLUDED.enc_key, created_at = now()`,
-        [tenant, provider, this.cipher.encrypt(providerKey)],
+         DO UPDATE SET enc_key = EXCLUDED.enc_key, base_url = EXCLUDED.base_url, created_at = now()`,
+        [tenant, provider, this.cipher.encrypt(providerKey), baseUrl ?? null],
       );
       return { status: "ok" };
     } catch (err) {
@@ -206,7 +214,7 @@ export class PgCredentialStore implements CredentialStore {
     let rows: CredentialRow[];
     try {
       ({ rows } = await this.db.query<CredentialRow>(
-        `SELECT enc_key FROM provider_credentials WHERE tenant_id = $1 AND provider = $2`,
+        `SELECT enc_key, base_url FROM provider_credentials WHERE tenant_id = $1 AND provider = $2`,
         [tenant, provider],
       ));
     } catch (err) {
@@ -214,7 +222,26 @@ export class PgCredentialStore implements CredentialStore {
     }
     const row = rows[0];
     if (!row) return { status: "not_found" };
-    return { status: "ok", providerKey: this.cipher.decrypt(row.enc_key) };
+    return { status: "ok", providerKey: this.cipher.decrypt(row.enc_key), baseUrl: row.base_url };
+  }
+
+  async list(tenant: string): Promise<CredentialListResult> {
+    let rows: { provider: string; base_url: string | null; created_at: Date | string }[];
+    try {
+      ({ rows } = await this.db.query(
+        `SELECT provider, base_url, created_at FROM provider_credentials
+          WHERE tenant_id = $1 ORDER BY provider`,
+        [tenant],
+      ));
+    } catch (err) {
+      return { status: "unavailable", reason: errorMessage(err) };
+    }
+    const connections: ProviderConnection[] = rows.map((row) => ({
+      provider: String(row.provider),
+      baseUrl: row.base_url,
+      createdAt: toIso(row.created_at),
+    }));
+    return { status: "ok", connections };
   }
 
   async remove(tenant: string, provider: string): Promise<CredentialRemoveResult> {
@@ -246,10 +273,12 @@ const API_KEYS_TABLE = `CREATE TABLE IF NOT EXISTS api_keys (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )`;
 
+// base_url arrives with 003; existing tables pick it up via the ALTER below.
 const PROVIDER_CREDENTIALS_TABLE = `CREATE TABLE IF NOT EXISTS provider_credentials (
   tenant_id TEXT NOT NULL,
   provider TEXT NOT NULL,
   enc_key TEXT NOT NULL,
+  base_url TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, provider)
 )`;
@@ -258,4 +287,5 @@ export async function migrateAuthTables(db: SqlClient): Promise<void> {
   await db.query(API_KEYS_TABLE);
   await db.query(PROVIDER_CREDENTIALS_TABLE);
   await db.query(`CREATE INDEX IF NOT EXISTS api_keys_tenant_idx ON api_keys (tenant_id)`);
+  await db.query(`ALTER TABLE provider_credentials ADD COLUMN IF NOT EXISTS base_url TEXT NULL`);
 }
