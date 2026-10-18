@@ -22,7 +22,12 @@ const PROVIDER = "mock";
 
 /** Assert app canonical/hash/key parity against the gateway for one payload. */
 async function assertParity(payload: ChatPayload): Promise<void> {
-  const gateway = buildExactCacheKey(PROVIDER, payload);
+  // Gateway requests carry an explicit temperature; an absent field is 1.0 on
+  // both sides (normalize.ts `?? 1.0`), which is exactly what this pins.
+  const gateway = buildExactCacheKey(PROVIDER, {
+    ...payload,
+    temperature: payload.temperature ?? 1.0,
+  });
   const canonical = canonicalizePayload(payload);
 
   expect(canonical).toBe(gateway.canonical);

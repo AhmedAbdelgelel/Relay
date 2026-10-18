@@ -154,7 +154,8 @@ export interface ChatPayloadMessage {
 export interface ChatPayload {
   model: string;
   messages: ChatPayloadMessage[];
-  temperature: number;
+  /** Omitted by the simplified composer — the gateway normalizes absent to 1.0. */
+  temperature?: number;
   stream: boolean;
   max_tokens?: number;
 }

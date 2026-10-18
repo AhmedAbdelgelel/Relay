@@ -33,7 +33,12 @@ import type {
   Evidence,
   MessageMeta,
 } from "@/lib/types";
-import { providerDisplayLabel, providerPillLabel } from "@/components/playground/catalog";
+import {
+  catalogProviderId,
+  providerDisplayLabel,
+  providerForModel,
+  providerPillLabel,
+} from "@/components/playground/catalog";
 import { type PlaygroundDraft, getDraft, setDraft } from "@/components/playground/draft";
 import { RequestPanel } from "@/components/playground/RequestPanel";
 import { Thread, type LiveState, type PendingState } from "@/components/playground/Thread";
@@ -157,6 +162,8 @@ function resolvePayload(message: ChatMessage | null, lastRun: RunState | null): 
 export default function PlaygroundPage(): ReactNode {
   const {
     connection,
+    advanced,
+    health,
     activeChat,
     activeChatId,
     newChat,
@@ -188,8 +195,13 @@ export default function PlaygroundPage(): ReactNode {
     setDraft(next);
   };
 
-  const selectionLabel = providerDisplayLabel(form.provider);
-  const connectionKey = `${connection.baseUrl}\u0000${connection.apiKey}`;
+  /**
+   * Display-only mirror of the gateway's model routing (the model alone
+   * decides the provider; the gateway stays authoritative). `health.provider`
+   * is the gateway's default provider used as the fallback for unknown ids.
+   */
+  const providerId = providerForModel(form.model, catalogProviderId(health?.provider));
+  const selectionLabel = providerDisplayLabel(providerId);
 
   const messages = activeChat?.messages ?? [];
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -259,7 +271,12 @@ export default function PlaygroundPage(): ReactNode {
     const canonical = canonicalizePayload(payload);
     const sentId = newRequestId();
     const streamed = payload.stream;
-    const selectLabel = selectionLabel;
+    // The display label is derived from THIS payload (not the render-phase
+    // selection) so regenerate/retry rows keep the label of the model that
+    // actually ran — and the closure stays decoupled from render dataflow.
+    const selectLabel = providerDisplayLabel(
+      providerForModel(payload.model, catalogProviderId(health?.provider)),
+    );
     const t0 = performance.now();
     // A new run starts clean: the previous run's meta strip and header id
     // chip must not sit next to this request while it is in flight (both the
@@ -716,8 +733,6 @@ export default function PlaygroundPage(): ReactNode {
       model: form.model,
       system: form.system,
       user: text,
-      temperature: form.temperature,
-      maxTokens: form.maxTokens,
       stream: form.stream,
     });
     appendMessage(chatId, { id: newId("m"), role: "user", kind: "normal", text });
@@ -750,10 +765,10 @@ export default function PlaygroundPage(): ReactNode {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge tone="neutral" title="Provider selection">
-            {providerPillLabel(form.provider)}
+          <Badge tone="neutral" title="Routed by model id">
+            {providerPillLabel(providerId)}
           </Badge>
-          {summary ? (
+          {advanced && summary ? (
             <span className="font-mono text-[11px] text-ink-3" title={summary.requestId}>
               {summary.requestId.slice(0, 8)}
             </span>
@@ -767,7 +782,6 @@ export default function PlaygroundPage(): ReactNode {
           onPatch={patchForm}
           running={running}
           onSendOrStop={sendOrStop}
-          connectionKey={connectionKey}
           composerRef={composerRef}
         />
 
@@ -788,6 +802,7 @@ export default function PlaygroundPage(): ReactNode {
                 pending={pendingRow}
                 regenerateId={regenerateId}
                 retryId={retryId}
+                detailed={advanced}
                 onRegenerate={regenerate}
                 onRetry={retryLast}
                 onPick={pickSuggestion}
@@ -795,16 +810,21 @@ export default function PlaygroundPage(): ReactNode {
             </div>
           </Card>
 
-          <ResponseMeta summary={summary} />
+          {/* Technical surfaces live behind Settings → Advanced (simple by default). */}
+          {advanced ? (
+            <>
+              <ResponseMeta summary={summary} />
 
-          <RequestTrace
-            payload={trace?.payload ?? null}
-            summary={trace?.summary ?? null}
-            running={trace?.running ?? false}
-            providerId={form.provider}
-          />
+              <RequestTrace
+                payload={trace?.payload ?? null}
+                summary={trace?.summary ?? null}
+                running={trace?.running ?? false}
+                providerId={providerId}
+              />
 
-          <SessionPanel stats={stats} />
+              <SessionPanel stats={stats} />
+            </>
+          ) : null}
         </div>
       </div>
     </div>

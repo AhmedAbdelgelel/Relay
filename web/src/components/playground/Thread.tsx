@@ -38,6 +38,8 @@ interface ThreadProps {
   pending: PendingState | null;
   regenerateId: string | null;
   retryId: string | null;
+  /** Settings → Advanced: per-reply metrics line + cache-evidence card. */
+  detailed: boolean;
   onRegenerate: () => void;
   onRetry: () => void;
   onPick: (text: string) => void;
@@ -112,6 +114,7 @@ function AssistantRow({
   evidence,
   isLive,
   live,
+  detailed,
   canRegenerate,
   onRegenerate,
 }: {
@@ -120,6 +123,7 @@ function AssistantRow({
   evidence: Evidence | undefined;
   isLive: boolean;
   live: LiveState | null;
+  detailed: boolean;
   canRegenerate: boolean;
   onRegenerate: () => void;
 }) {
@@ -144,13 +148,13 @@ function AssistantRow({
           />
         ) : null}
       </div>
-      {isLive && live ? (
+      {isLive && live && detailed ? (
         <div className="mt-1 text-[11px] text-ink-3 tabular-nums">
           streaming · {live.chunks} chunks · {(live.elapsedMs / 1000).toFixed(1)}s · ≈{" "}
           {estimateTokens(message.text).toLocaleString("en-US")} tok
         </div>
       ) : null}
-      {!isLive && meta ? (
+      {!isLive && meta && detailed ? (
         <>
           <MetricsLine
             meta={meta}
@@ -175,12 +179,14 @@ function NoticeRow({
   message,
   fallbackLabel,
   evidence,
+  detailed,
   canRegenerate,
   onRegenerate,
 }: {
   message: ChatMessage;
   fallbackLabel: string;
   evidence: Evidence | undefined;
+  detailed: boolean;
   canRegenerate: boolean;
   onRegenerate: () => void;
 }) {
@@ -194,7 +200,7 @@ function NoticeRow({
         {meta ? whoLine(meta.provider, meta.model, fallbackLabel) : fallbackLabel}
       </WhoLine>
       <div className="mt-0.5 text-[13px] leading-5 text-warn">{message.text}</div>
-      {meta ? (
+      {meta && detailed ? (
         <>
           <MetricsLine
             meta={meta}
@@ -301,6 +307,7 @@ export function Thread({
   pending,
   regenerateId,
   retryId,
+  detailed,
   onRegenerate,
   onRetry,
   onPick,
@@ -336,6 +343,7 @@ export function Thread({
               message={message}
               fallbackLabel={fallbackLabel}
               evidence={message.evidence}
+              detailed={detailed}
               canRegenerate={regenerateId === message.id}
               onRegenerate={onRegenerate}
             />
@@ -349,6 +357,7 @@ export function Thread({
             evidence={message.evidence}
             isLive={live !== null && live.messageId === message.id}
             live={live}
+            detailed={detailed}
             canRegenerate={regenerateId === message.id}
             onRegenerate={onRegenerate}
           />
