@@ -213,27 +213,70 @@ describe("config boot invariants", () => {
     expect(() => withEnv({ ...TEST_ENV, GATEWAY_API_KEYS: "tenant:nope:name:key" }, () => loadConfig())).toThrow(/provider must be one of/);
   });
 
-  it("numeric and boolean parsing falls back safely on garbage", () => {
+  it("boolean parsing falls back safely on garbage", () => {
+    const cfg = withEnv({ ...TEST_ENV, CACHE_ENABLED: "yes", SEMANTIC_ENABLED: "off" }, () => loadConfig());
+    expect(cfg.cacheEnabled).toBe(true);
+    expect(cfg.semanticEnabled).toBe(false);
+  });
+
+  it("explicitly set invalid numeric values throw at load instead of falling back", () => {
+    expect(() => withEnv({ ...TEST_ENV, UPSTREAM_TIMEOUT_MS: "abc" }, () => loadConfig())).toThrow(
+      /UPSTREAM_TIMEOUT_MS must be a positive number; got "abc"/,
+    );
+    expect(() => withEnv({ ...TEST_ENV, CACHE_TTL_S: "0" }, () => loadConfig())).toThrow(
+      /CACHE_TTL_S must be a positive number; got "0"/,
+    );
+    expect(() => withEnv({ ...TEST_ENV, CACHE_TTL_S: "-5" }, () => loadConfig())).toThrow(/CACHE_TTL_S must be a positive number/);
+    expect(() => withEnv({ ...TEST_ENV, SEMANTIC_TTL_S: "-1" }, () => loadConfig())).toThrow(/SEMANTIC_TTL_S must be a positive number/);
+    expect(() => withEnv({ ...TEST_ENV, SEMANTIC_TOP_K: "zero" }, () => loadConfig())).toThrow(/SEMANTIC_TOP_K must be a positive number/);
+    expect(() => withEnv({ ...TEST_ENV, SEMANTIC_THRESHOLD: "1" }, () => loadConfig())).toThrow(
+      /SEMANTIC_THRESHOLD must be a number in \(0, 1\); got "1"/,
+    );
+    expect(() => withEnv({ ...TEST_ENV, SEMANTIC_THRESHOLD: "1.5" }, () => loadConfig())).toThrow(
+      /SEMANTIC_THRESHOLD must be a number in \(0, 1\)/,
+    );
+    expect(() => withEnv({ ...TEST_ENV, SAVED_USD_PER_1K_TOKENS: "-3" }, () => loadConfig())).toThrow(
+      /SAVED_USD_PER_1K_TOKENS must be a non-negative number; got "-3"/,
+    );
+  });
+
+  it("valid numeric values pass through and unset numeric keys keep defaults", () => {
     const cfg = withEnv(
       {
         ...TEST_ENV,
-        UPSTREAM_TIMEOUT_MS: "abc",
-        CACHE_TTL_S: "-5",
-        SEMANTIC_THRESHOLD: "1.5",
-        SEMANTIC_TOP_K: "zero",
-        SAVED_USD_PER_1K_TOKENS: "0",
-        CACHE_ENABLED: "yes",
-        SEMANTIC_ENABLED: "off",
+        UPSTREAM_TIMEOUT_MS: "1500",
+        CACHE_TTL_S: "60",
+        SEMANTIC_THRESHOLD: "0.75",
+        SEMANTIC_TOP_K: "5",
+        SEMANTIC_TTL_S: "120",
+        SAVED_USD_PER_1K_TOKENS: "0.25",
       },
       () => loadConfig(),
     );
-    expect(cfg.upstreamTimeoutMs).toBe(25000);
-    expect(cfg.cacheTtlSec).toBe(3600);
-    expect(cfg.semanticThreshold).toBe(0.92);
-    expect(cfg.semanticTopK).toBe(3);
-    expect(cfg.savedUsdPer1kTokens).toBe(0);
-    expect(cfg.cacheEnabled).toBe(true);
-    expect(cfg.semanticEnabled).toBe(false);
+    expect(cfg.upstreamTimeoutMs).toBe(1500);
+    expect(cfg.cacheTtlSec).toBe(60);
+    expect(cfg.semanticThreshold).toBe(0.75);
+    expect(cfg.semanticTopK).toBe(5);
+    expect(cfg.semanticTtlSec).toBe(120);
+    expect(cfg.savedUsdPer1kTokens).toBe(0.25);
+    const unset = withEnv(
+      {
+        ...TEST_ENV,
+        UPSTREAM_TIMEOUT_MS: undefined,
+        CACHE_TTL_S: undefined,
+        SEMANTIC_THRESHOLD: undefined,
+        SEMANTIC_TOP_K: undefined,
+        SEMANTIC_TTL_S: undefined,
+        SAVED_USD_PER_1K_TOKENS: undefined,
+      },
+      () => loadConfig(),
+    );
+    expect(unset.upstreamTimeoutMs).toBe(25000);
+    expect(unset.cacheTtlSec).toBe(3600);
+    expect(unset.semanticThreshold).toBe(0.92);
+    expect(unset.semanticTopK).toBe(3);
+    expect(unset.semanticTtlSec).toBe(3600);
+    expect(unset.savedUsdPer1kTokens).toBe(0);
   });
 
   it("parses seeded gateway keys and keeps colons inside the key", () => {
