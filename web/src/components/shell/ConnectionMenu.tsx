@@ -3,8 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { useAppStore } from "@/lib/store";
+import { GatewayClient } from "@/lib/gateway";
 import { Button } from "@/components/ui/Button";
 import { IconChevronDown } from "@/components/ui/icons";
+import type { RegisterResult } from "@/lib/types";
+
+/** The product's provider list (gateway config enum) — register accepts any known one. */
+const REGISTER_PROVIDERS = ["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"] as const;
 
 function avatarLetter(baseUrl: string): string {
   if (!baseUrl) return "D";
@@ -29,14 +34,27 @@ export function ConnectionMenu() {
   const [open, setOpen] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  // Register-in-place: the product's open route turns a try-out visitor into
+  // a settled tenant without leaving the control plane.
+  const [regName, setRegName] = useState("playground");
+  const [regProvider, setRegProvider] = useState<string>("mock");
+  const [regProviderKey, setRegProviderKey] = useState("");
+  const [registering, setRegistering] = useState(false);
+  const [regError, setRegError] = useState<string | null>(null);
+  const [regResult, setRegResult] = useState<RegisterResult | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const openMenu = () => {
-    // Seed drafts from the live connection each time the menu opens.
+    // Seed drafts from the live connection each time the menu opens; a stale
+    // register result/key from a previous session must not survive the reopen.
     setBaseUrl(connection.baseUrl);
     setApiKey(connection.apiKey);
+    setRegProvider(health?.provider ?? "mock");
+    setRegProviderKey("");
+    setRegResult(null);
+    setRegError(null);
     setOpen(true);
   };
 
@@ -60,10 +78,31 @@ export function ConnectionMenu() {
     };
   }, [open]);
 
-  const apply = () => {
-    setConnection({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim() });
+  const apply = (apiKeyOverride?: string) => {
+    setConnection({ baseUrl: baseUrl.trim(), apiKey: (apiKeyOverride ?? apiKey).trim() });
     refresh();
     setOpen(false);
+  };
+
+  const submitRegister = async (): Promise<void> => {
+    setRegistering(true);
+    setRegError(null);
+    setRegResult(null);
+    try {
+      // Register against the DRAFTED base URL: works while configuring a
+      // remote gateway before it is applied.
+      const client = new GatewayClient({ baseUrl, apiKey: "" });
+      const result = await client.register({
+        name: regName.trim() || "playground",
+        provider: regProvider,
+        providerKey: regProviderKey.trim() || "unused",
+      });
+      setRegResult(result);
+    } catch (error) {
+      setRegError(error instanceof Error ? error.message : "Registration failed.");
+    } finally {
+      setRegistering(false);
+    }
   };
 
   const statusText =
@@ -128,6 +167,99 @@ export function ConnectionMenu() {
               <span className="text-[11px] text-ink-3">{statusText}</span>
             </div>
           </form>
+
+          <details className="group rounded-card border border-line bg-canvas">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-1.5 text-[11px] text-ink-2 hover:text-ink [&::-webkit-details-marker]:hidden">
+              Register a gateway key
+              <IconChevronDown
+                size={12}
+                className="shrink-0 text-ink-3 transition-transform duration-150 group-open:rotate-180"
+              />
+            </summary>
+            <div className="border-t border-line px-2.5 py-2">
+              <label htmlFor="reg-name" className="text-[11px] text-ink-3">
+                Workspace name
+              </label>
+              <input
+                id="reg-name"
+                type="text"
+                value={regName}
+                onChange={(event) => setRegName(event.target.value)}
+                placeholder="playground"
+                autoComplete="off"
+                spellCheck={false}
+                className={inputClasses}
+              />
+              <label htmlFor="reg-provider" className="text-[11px] text-ink-3">
+                Provider
+              </label>
+              <select
+                id="reg-provider"
+                value={regProvider}
+                onChange={(event) => setRegProvider(event.target.value)}
+                className={inputClasses}
+              >
+                {REGISTER_PROVIDERS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <label htmlFor="reg-pkey" className="text-[11px] text-ink-3">
+                Upstream provider key
+              </label>
+              <input
+                id="reg-pkey"
+                type="password"
+                value={regProviderKey}
+                onChange={(event) => setRegProviderKey(event.target.value)}
+                placeholder={
+                  regProvider === "mock"
+                    ? "any string (mock ignores it)"
+                    : regProvider === "openrouter"
+                      ? "optional on :free models"
+                      : "paste your real provider key"
+                }
+                autoComplete="off"
+                spellCheck={false}
+                className={inputClasses}
+              />
+              {regError ? (
+                <p aria-live="polite" className="mb-2 text-[11px] leading-4 text-err">
+                  {regError}
+                </p>
+              ) : null}
+              {regResult ? (
+                <div className="mb-2">
+                  <p className="mb-1 text-[11px] leading-4 text-ink-2">
+                    Key — shown once; registering again creates a new tenant.
+                  </p>
+                  <p className="mb-2 break-all font-mono text-[11px] leading-4 text-ink">
+                    {regResult.key}
+                  </p>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      setApiKey(regResult.key);
+                      apply(regResult.key);
+                    }}
+                  >
+                    Use this key
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={registering}
+                  onClick={() => void submitRegister()}
+                >
+                  {registering ? "Registering…" : "Register"}
+                </Button>
+              )}
+            </div>
+          </details>
         </div>
       ) : null}
       <button

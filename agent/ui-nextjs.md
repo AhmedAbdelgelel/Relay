@@ -102,10 +102,15 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
     exact/semantic hits, misses, derived hit rate, avoided calls, avg latency, coalesced) with
     honest anonymous/unavailable states; session panel discloses the latency sample size `(n=…)`
     once errors drop samples from the average.
+12. Register-in-place — the connection menu's "Register a gateway key" disclosure drives the
+    open `POST /v1/register` route (name/provider/upstream key drafted against the live menu;
+    the issued key is shown once, and "Use this key" applies it immediately — an applied-key
+    stale-draft race found in live verification is locked by a component contract test).
+    Anonymous users now finish the product's zero-setup story without copy-pasting keys.
 
 ## Verification (results)
 
-- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (79 passing), `npm run build`
+- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (83 passing), `npm run build`
   (all 9 routes prerendered) — green on the delivered tree.
 - Lighthouse (harness browser): accessibility 100 · best-practices 100 · SEO 100 on `/` in both
   themes; the same bar passed on `/playground` in light before the usage panel landed.
