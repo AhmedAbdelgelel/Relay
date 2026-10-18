@@ -175,10 +175,6 @@ function blend(): number[] {
   return v;
 }
 
-export interface CountingEmbedder extends EmbeddingProvider {
-  calls: number;
-}
-
 export class KeywordEmbedder implements EmbeddingProvider {
   readonly name = "test-keyword";
   readonly dimension = EMBEDDING_DIM;
@@ -315,20 +311,4 @@ export function sendJson(res: ServerResponse, status: number, obj: unknown): voi
   const body = JSON.stringify(obj);
   res.writeHead(status, { "content-type": "application/json" });
   res.end(body);
-}
-
-export function sendSse(res: ServerResponse, frames: string[], opts: { done?: boolean; midDelayMs?: number } = {}): void {
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-  const lines = frames.map((f) => `data: ${f}\n\n`).join("");
-  if (opts.midDelayMs) {
-    setTimeout(() => {
-      res.write(lines);
-      if (opts.done !== false) res.write("data: [DONE]\n\n");
-      res.end();
-    }, opts.midDelayMs);
-    return;
-  }
-  res.write(lines);
-  if (opts.done !== false) res.write("data: [DONE]\n\n");
-  res.end();
 }
