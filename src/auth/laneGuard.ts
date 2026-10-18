@@ -111,12 +111,17 @@ export function createLaneGuard(app: FastifyInstance, apiKeys: ApiKeyStore): pre
   };
 }
 
-export function laneProviderMismatch(auth: LaneAuth, servingProvider: string): GatewayError | null {
-  if (auth.lane !== "registered" || auth.provider === servingProvider) return null;
+export function laneProviderMismatch(
+  auth: LaneAuth,
+  servingProvider: string,
+  tenantConnected = false,
+): GatewayError | null {
+  if (auth.lane !== "registered" || auth.provider === servingProvider || tenantConnected) return null;
   return new GatewayError(
     403,
     "provider_mismatch",
-    `gateway key is bound to provider '${auth.provider}' but the request routes to '${servingProvider}'`,
+    `gateway key is bound to provider '${auth.provider}' but the request routes to '${servingProvider}'; ` +
+      `connect '${servingProvider}' with your own key (POST /v1/connections) to route it on this gateway key`,
     false,
   );
 }

@@ -2,6 +2,7 @@
 import "dotenv/config";
 import Fastify from "fastify";
 import { registerChatRoutes } from "./api/routes/chat.js";
+import { registerConnectionsRoutes } from "./api/routes/connections.js";
 import { registerPlayground } from "./api/routes/playground.js";
 import { registerProviderRoutes } from "./api/routes/providers.js";
 import { registerRegisterRoutes } from "./api/routes/register.js";
@@ -39,6 +40,7 @@ export function buildServer() {
   };
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
   registerRegisterRoutes(app, auth);
+  registerConnectionsRoutes(app, cfg, auth);
   registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers);
   registerPlayground(app);
@@ -57,6 +59,7 @@ export async function buildServerAsync() {
   const auth = await createAuthStoresFromEnv(cfg);
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
   registerRegisterRoutes(app, auth);
+  registerConnectionsRoutes(app, cfg, auth);
   registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers);
   registerPlayground(app);

@@ -96,23 +96,20 @@ export function createProvidersFromEnv(cfg: GatewayConfig): Map<string, Provider
   return map;
 }
 
-export function providerWithKey(name: string, apiKey: string, cfg: GatewayConfig): ProviderAdapter {
-  switch (name) {
-    case "mock":
-      return new MockProvider();
-    case "gemini":
-      return new OpenAICompatibleProvider({ name, baseURL: cfg.geminiBaseUrl, apiKey, defaultModel: cfg.geminiModel });
-    case "ollama":
-      return new OpenAICompatibleProvider({ name, baseURL: cfg.ollamaBaseUrl, apiKey: "", defaultModel: cfg.ollamaModel });
-    case "openai":
-      return new OpenAICompatibleProvider({ name, baseURL: cfg.openaiBaseUrl, apiKey, defaultModel: cfg.openaiModel });
-    case "anthropic":
-      return new AnthropicAdapter({ name, baseURL: cfg.anthropicBaseUrl, apiKey, defaultModel: cfg.anthropicModel });
-    case "openrouter":
-      return new OpenAICompatibleProvider({ name, baseURL: cfg.openRouterBaseUrl, apiKey, defaultModel: cfg.openRouterModel });
-    default:
-      throw new Error(`providerWithKey: unknown provider "${name}"`);
-  }
+/**
+ * Pure routing rule: model id → provider name, or null when no prefix/pattern
+ * matches (the default provider serves those). Extracted so the chat route can
+ * look up a tenant credential for the routed provider even when the operator
+ * did not configure that provider from env.
+ */
+export function routeProviderName(model: string): string | null {
+  const m = (model || "").toLowerCase();
+  if (m.startsWith("gpt-")) return "openai";
+  if (m.startsWith("claude-")) return "anthropic";
+  if (m.startsWith("gemini-")) return "gemini";
+  if (m.startsWith("llama") || m.startsWith("nomic")) return "ollama";
+  if (m.startsWith("openrouter/") || m.endsWith(":free")) return "openrouter";
+  return null;
 }
 
 export function providerForModel(
@@ -120,23 +117,58 @@ export function providerForModel(
   providers: Map<string, ProviderAdapter>,
   fallback: ProviderAdapter,
 ): ProviderAdapter {
-  const m = (model || "").toLowerCase();
-  const pick = (name: string): ProviderAdapter | undefined => providers.get(name);
-  if (m.startsWith("gpt-")) {
-    const p = pick("openai");
-    if (p) return p;
-  } else if (m.startsWith("claude-")) {
-    const p = pick("anthropic");
-    if (p) return p;
-  } else if (m.startsWith("gemini-")) {
-    const p = pick("gemini");
-    if (p) return p;
-  } else if (m.startsWith("llama") || m.startsWith("nomic")) {
-    const p = pick("ollama");
-    if (p) return p;
-  } else if (m.startsWith("openrouter/") || m.endsWith(":free")) {
-    const p = pick("openrouter");
-    if (p) return p;
+  const name = routeProviderName(model);
+  return (name ? providers.get(name) : undefined) ?? fallback;
+}
+
+/** Providers whose upstream rejects unauthenticated calls. */
+const AUTH_PROVIDERS = new Set(["openai", "anthropic", "gemini", "openrouter"]);
+
+export function providerRequiresKey(name: string): boolean {
+  return AUTH_PROVIDERS.has(name);
+}
+
+/** The gateway's configured endpoint for a provider. */
+export function defaultEndpointFor(name: string, cfg: GatewayConfig): string {
+  switch (name) {
+    case "gemini":
+      return cfg.geminiBaseUrl;
+    case "openai":
+      return cfg.openaiBaseUrl;
+    case "anthropic":
+      return cfg.anthropicBaseUrl;
+    case "ollama":
+      return cfg.ollamaBaseUrl;
+    case "openrouter":
+      return cfg.openRouterBaseUrl;
+    case "mock":
+      return "in-process";
+    default:
+      return "";
   }
-  return fallback;
+}
+
+export function providerWithKey(
+  name: string,
+  apiKey: string,
+  cfg: GatewayConfig,
+  baseUrl?: string | null,
+): ProviderAdapter {
+  const url = (fallback: string): string => (baseUrl && baseUrl.trim() !== "" ? baseUrl.trim() : fallback);
+  switch (name) {
+    case "mock":
+      return new MockProvider();
+    case "gemini":
+      return new OpenAICompatibleProvider({ name, baseURL: url(cfg.geminiBaseUrl), apiKey, defaultModel: cfg.geminiModel });
+    case "ollama":
+      return new OpenAICompatibleProvider({ name, baseURL: url(cfg.ollamaBaseUrl), apiKey: "", defaultModel: cfg.ollamaModel });
+    case "openai":
+      return new OpenAICompatibleProvider({ name, baseURL: url(cfg.openaiBaseUrl), apiKey, defaultModel: cfg.openaiModel });
+    case "anthropic":
+      return new AnthropicAdapter({ name, baseURL: url(cfg.anthropicBaseUrl), apiKey, defaultModel: cfg.anthropicModel });
+    case "openrouter":
+      return new OpenAICompatibleProvider({ name, baseURL: url(cfg.openRouterBaseUrl), apiKey, defaultModel: cfg.openRouterModel });
+    default:
+      throw new Error(`providerWithKey: unknown provider "${name}"`);
+  }
 }

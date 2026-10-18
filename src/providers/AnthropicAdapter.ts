@@ -58,6 +58,7 @@ function toAnthropicBody(req: ChatRequest, defaultModel: string): Record<string,
 
 export class AnthropicAdapter implements ProviderAdapter {
   readonly name: string;
+  readonly configured: boolean;
   readonly capabilities: ProviderCapabilities = {
     chat: true,
     streaming: true,
@@ -74,6 +75,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     this.name = opts.name ?? "anthropic";
     this.baseURL = opts.baseURL.replace(/\/$/, "");
     this.apiKey = opts.apiKey;
+    this.configured = opts.apiKey !== "";
     this.defaultModel = opts.defaultModel;
   }
 

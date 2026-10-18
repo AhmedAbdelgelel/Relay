@@ -33,6 +33,7 @@ function readUsage(u?: { prompt_tokens?: number; completion_tokens?: number }): 
 
 export class OpenAICompatibleProvider implements ProviderAdapter {
   readonly name: string;
+  readonly configured: boolean;
   readonly capabilities: ProviderCapabilities = {
     chat: true,
     streaming: true,
@@ -49,6 +50,7 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
     this.name = opts.name;
     this.baseURL = opts.baseURL.replace(/\/$/, "");
     this.apiKey = opts.apiKey;
+    this.configured = opts.apiKey !== "";
     this.defaultModel = opts.defaultModel;
   }
 
