@@ -36,7 +36,7 @@ const FILLED_CHAT: ChatRecord = {
   ],
 };
 
-function renderThread(chat: ChatRecord | null, onPick = vi.fn()) {
+function renderThread(chat: ChatRecord | null, onPick = vi.fn(), detailed = true) {
   render(
     <Thread
       chat={chat}
@@ -45,6 +45,7 @@ function renderThread(chat: ChatRecord | null, onPick = vi.fn()) {
       pending={null}
       regenerateId={null}
       retryId={null}
+      detailed={detailed}
       onRegenerate={vi.fn()}
       onRetry={vi.fn()}
       onPick={onPick}
@@ -131,5 +132,12 @@ describe("Thread message rows", () => {
 
     expect(screen.getByText("registered")).toBeVisible();
     expect(screen.getByText(/key key-6027c011 · coalesced false/)).toBeVisible();
+  });
+
+  it("hides metrics and evidence when Advanced is off", () => {
+    renderThread(FILLED_CHAT, vi.fn(), false);
+
+    expect(screen.queryByRole("button", { name: /cache HIT/ })).toBeNull();
+    expect(screen.getByText("General Kenobi!")).toBeVisible();
   });
 });

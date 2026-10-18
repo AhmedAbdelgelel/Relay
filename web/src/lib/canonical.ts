@@ -5,7 +5,9 @@ export interface BuildPayloadForm {
   model: string;
   system?: string | null;
   user: string;
-  temperature: number;
+  /** Sampling is intentionally not surfaced in the simple composer: absent
+   *  fields are normalized by the gateway (temperature ?? 1.0, no max_tokens). */
+  temperature?: number;
   maxTokens?: number | null;
   stream: boolean;
 }
@@ -20,9 +22,9 @@ export function buildPayload(form: BuildPayloadForm): ChatPayload {
   const payload: ChatPayload = {
     model: form.model,
     messages,
-    temperature: form.temperature,
     stream: form.stream,
   };
+  if (form.temperature !== undefined) payload.temperature = form.temperature;
   if (form.maxTokens) payload.max_tokens = form.maxTokens;
   return payload;
 }

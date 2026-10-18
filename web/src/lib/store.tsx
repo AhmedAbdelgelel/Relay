@@ -35,6 +35,8 @@ import {
 /** Shared with the pre-paint theme script in app/layout.tsx — keep in sync. */
 export const THEME_KEY = "llm-gateway-theme";
 export const CHATS_KEY = "llm-gateway-chats-v1";
+/** Settings → Advanced: reveals technical surfaces in the playground. */
+export const ADVANCED_KEY = "llm-gateway-advanced";
 
 export const MAX_CHATS = 30;
 export const DEFAULT_CHAT_TITLE = "New chat";
@@ -50,6 +52,8 @@ interface PersistedChats {
 interface AppState {
   hydrated: boolean;
   connection: Connection;
+  /** Settings → Advanced toggle (persisted): show technical details. */
+  advanced: boolean;
   chats: ChatRecord[];
   activeChatId: string | null;
   stats: SessionStats;
@@ -60,8 +64,9 @@ interface AppState {
 }
 
 type Action =
-  | { type: "hydrate"; persisted: PersistedChats; connection: Connection }
+  | { type: "hydrate"; persisted: PersistedChats; connection: Connection; advanced: boolean }
   | { type: "connection"; connection: Connection }
+  | { type: "advanced"; advanced: boolean }
   | { type: "new-chat"; id: string; at: string }
   | { type: "select-chat"; id: string }
   | { type: "delete-chat"; id: string }
@@ -78,6 +83,7 @@ type Action =
 const INITIAL_STATE: AppState = {
   hydrated: false,
   connection: { baseUrl: "", apiKey: "" },
+  advanced: false,
   chats: [],
   activeChatId: null,
   stats: EMPTY_STATS,
@@ -139,6 +145,24 @@ function savePersistedChats(persisted: PersistedChats): void {
     window.localStorage.setItem(CHATS_KEY, JSON.stringify(persisted));
   } catch {
     /* storage disabled: chats stay in memory for this session */
+  }
+}
+
+function loadAdvanced(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(ADVANCED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveAdvanced(advanced: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(ADVANCED_KEY, advanced ? "1" : "0");
+  } catch {
+    /* storage disabled: the toggle stays in memory for this session */
   }
 }
 
@@ -227,9 +251,12 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         hydrated: true,
         connection: action.connection,
+        advanced: action.advanced,
         chats: action.persisted.chats,
         activeChatId: action.persisted.activeChatId,
       };
+    case "advanced":
+      return { ...state, advanced: action.advanced };
     case "connection": {
       const changed =
         action.connection.baseUrl !== state.connection.baseUrl ||
@@ -321,6 +348,9 @@ export interface AppStore {
   hydrated: boolean;
   connection: Connection;
   setConnection: (connection: Connection) => void;
+  /** Settings → Advanced: show technical details in the playground. */
+  advanced: boolean;
+  setAdvanced: (advanced: boolean) => void;
   chats: ChatRecord[];
   activeChatId: string | null;
   activeChat: ChatRecord | null;
@@ -361,6 +391,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       type: "hydrate",
       persisted: loadPersistedChats(),
       connection: loadConnection(),
+      advanced: loadAdvanced(),
     });
   }, []);
 
@@ -369,6 +400,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state.hydrated) saveConnection(state.connection);
   }, [state.hydrated, state.connection]);
+  useEffect(() => {
+    if (state.hydrated) saveAdvanced(state.advanced);
+  }, [state.hydrated, state.advanced]);
   useEffect(() => {
     if (state.hydrated) {
       savePersistedChats({ activeChatId: state.activeChatId, chats: state.chats });
@@ -418,6 +452,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setConnection = useCallback((next: Connection) => {
     dispatch({ type: "connection", connection: next });
+  }, []);
+  const setAdvanced = useCallback((advanced: boolean) => {
+    dispatch({ type: "advanced", advanced });
   }, []);
   const newChat = useCallback((): string => {
     const id = newId("chat");
@@ -473,6 +510,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       hydrated: state.hydrated,
       connection: state.connection,
       setConnection,
+      advanced: state.advanced,
+      setAdvanced,
       chats: state.chats,
       activeChatId: state.activeChatId,
       activeChat,
@@ -497,6 +536,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       state,
       activeChat,
       setConnection,
+      setAdvanced,
       newChat,
       selectChat,
       deleteChat,

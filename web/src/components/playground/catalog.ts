@@ -4,8 +4,10 @@
  * labels, suggestions, trace steps, cache hints).
  *
  * The model list is a client-side hint only: the gateway routes by model
- * prefix regardless (gpt-* → openai, claude-* → anthropic, gemini-* → google),
- * so a live /providers catalog never blocks a manually typed model.
+ * prefix regardless (gpt-* → openai, claude-* → anthropic, gemini-* → google,
+ * *:free / openrouter/* → openrouter), so a live /providers catalog never
+ * blocks a manually typed model. The openrouter entry lists the $0 free tier
+ * fetched from https://openrouter.ai/api/v1/models (2026-10-18).
  */
 
 import type { CacheVerdict, Lane } from "@/lib/types";
@@ -36,6 +38,28 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
     endpoint: "https://api.anthropic.com/v1",
     models: ["claude-4", "claude-4-sonnet", "claude-3.7-haiku"],
   },
+  openrouter: {
+    label: "OpenRouter",
+    adapter: "OpenAI-compatible Adapter",
+    endpoint: "https://openrouter.ai/api/v1",
+    models: [
+      "nvidia/nemotron-3-super-120b-a12b:free",
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "nvidia/nemotron-3.5-lightning:free",
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "google/gemma-4-31b-it:free",
+      "google/gemma-4-26b-a4b-it:free",
+      "thinkingmachines/inkling:free",
+      "thinkingmachines/inkling-small:free",
+      "poolside/laguna-s-2.1:free",
+      "poolside/laguna-xs-2.1:free",
+      "liquid/lfm-2.5-2.6b:free",
+      "cohere/north-mini-code:free",
+      "xingchen-agi/xing4.0-29b-a4b:free",
+      "dots-studio/dots-3-note-preview:free",
+      "nvidia/nemotron-3.5-super-vl:free",
+    ],
+  },
   custom: {
     label: "Custom",
     adapter: "OpenAI-compatible Adapter",
@@ -44,14 +68,48 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
   },
 };
 
-/** `<select>` order from the legacy viewPlayground() markup. */
-export const PROVIDER_ORDER = ["google", "openai", "anthropic", "custom"] as const;
+/** `<select>` order from the legacy viewPlayground() markup (picker group order). */
+export const PROVIDER_ORDER = ["google", "openai", "anthropic", "openrouter", "custom"] as const;
+
+/** Free OpenRouter tier: `:free` suffixed ids route to OpenRouter and bill $0. */
+export function isFreeModel(model: string): boolean {
+  return model.endsWith(":free");
+}
+
+/**
+ * Client mirror of the gateway's providerForModel() (src/providers/factory.ts),
+ * used for display only — the gateway resolves the real provider per request.
+ * `fallback` maps the gateway's default provider id to a catalog id.
+ */
+export function providerForModel(model: string, fallback = "google"): string {
+  const m = (model || "").toLowerCase();
+  if (m.startsWith("gpt-")) return "openai";
+  if (m.startsWith("claude-")) return "anthropic";
+  if (m.startsWith("gemini-")) return "google";
+  if (m.startsWith("llama") || m.startsWith("nomic")) return "custom";
+  if (m.startsWith("openrouter/") || m.endsWith(":free")) return "openrouter";
+  return fallback;
+}
+
+/** Map a gateway provider id (health.provider) to a catalog id for display. */
+export function catalogProviderId(providerId: string | null | undefined): string {
+  switch (providerId) {
+    case "gemini":
+      return "google";
+    case "ollama":
+      return "custom";
+    case "openai":
+    case "anthropic":
+    case "openrouter":
+    case "mock":
+      return providerId;
+    default:
+      return "google";
+  }
+}
 
 export const DEFAULTS = {
-  provider: "google",
   model: "gemini-3.6-flash",
-  temperature: 0.7,
-  maxTokens: 512,
   stream: true,
 } as const;
 
@@ -69,7 +127,8 @@ export const SUGGESTIONS = [
  */
 export function providerDisplayLabel(provider: string | null | undefined): string {
   if (!provider) return "Assistant";
-  if (provider === "google") return "Gemini";
+  if (provider === "google" || provider === "gemini") return "Gemini";
+  if (provider === "ollama") return "Ollama";
   return PROVIDERS[provider]?.label ?? provider;
 }
 
@@ -82,6 +141,8 @@ export function providerPillLabel(provider: string): string {
       return "OpenAI · GPT";
     case "anthropic":
       return "Anthropic · Claude";
+    case "openrouter":
+      return "OpenRouter";
     case "custom":
       return "Custom";
     default:

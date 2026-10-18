@@ -15,20 +15,14 @@
 import { DEFAULTS } from "./catalog";
 
 export interface PlaygroundDraft {
-  provider: string;
   model: string;
-  temperature: number;
-  maxTokens: number;
   stream: boolean;
   system: string;
   user: string;
 }
 
 const DRAFT: PlaygroundDraft = {
-  provider: DEFAULTS.provider,
   model: DEFAULTS.model,
-  temperature: DEFAULTS.temperature,
-  maxTokens: DEFAULTS.maxTokens,
   stream: DEFAULTS.stream,
   system: "",
   user: "",
