@@ -360,6 +360,42 @@ describe("malformed-shape eviction", () => {
     expect(provider.calls).toBe(1);
     await app.close();
   });
+
+  it("stored blank content is evicted and served as MISS", async () => {
+    const provider = new ScriptedProvider("mock");
+    const inner = new InMemoryCache();
+    const dels: string[] = [];
+    const cache: CacheRepository = {
+      name: "spy",
+      get: (k) => inner.get(k),
+      set: (k, v, ttl) => inner.set(k, v, ttl),
+      del: (k) => {
+        dels.push(k);
+        return inner.del(k);
+      },
+      ping: () => inner.ping(),
+      close: () => inner.close(),
+    };
+    const { app } = makeApp({ auth: lanes.auth, provider, cache, env: { SEMANTIC_ENABLED: "false" } });
+    const lane = lanes.laneFor("mock").key;
+    const req = { model: "m", messages: [{ role: "user" as const, content: "blank neighbor" }] };
+    const key = buildExactCacheKey("mock", { ...req, temperature: 1, stream: false }).key;
+    await inner.set(key, JSON.stringify({ content: "   ", model: "m", usage: { prompt_tokens: 1, completion_tokens: 0 } }), 60);
+
+    const res = await chat(app, lane, req);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-cache"]).toBe("MISS");
+    expect(dels).toEqual([key]);
+    expect(provider.calls).toBe(1);
+    const freshContent = res.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content;
+    expect(freshContent.trim()).not.toBe("");
+    const second = await chat(app, lane, req);
+    expect(second.statusCode).toBe(200);
+    expect(second.headers["x-cache"]).toBe("HIT");
+    expect(second.json<{ choices: { message: { content: string } }[] }>().choices[0]!.message.content).toBe(freshContent);
+    expect(provider.calls).toBe(1);
+    await app.close();
+  });
 });
 
 describe("real cache transport failure", () => {
