@@ -14,3 +14,5 @@ tests
 agent
 evaluation
 scripts
+# web/ is the separate Next.js app; the Dockerfile never copies it.
+web
