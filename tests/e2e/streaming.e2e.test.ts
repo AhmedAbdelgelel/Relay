@@ -43,6 +43,10 @@ describe("SSE happy paths", () => {
     expect(res.headers["x-cache-hash"]).toBeTruthy();
     expect(res.headers["x-provider"]).toBe("mock");
     expect(Number.isFinite(Number(res.headers["x-latency-ms"]))).toBe(true);
+    // Hijacked streams must carry CORS themselves (custom cross-origin Gateway
+    // URL + browser streaming), not only the Fastify reply header.
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
+    expect(String(res.headers["access-control-expose-headers"])).toContain("x-lane");
 
     const { frames, done } = parseSSE(res.body);
     expect(done).toBe(true);
@@ -130,6 +134,7 @@ describe("pre-first-token failures are real JSON statuses", () => {
     expect(res.headers["x-lane"]).toBe("registered");
     expect(res.headers["x-key-id"]).toBe(lanes.laneFor("mock").keyId);
     expect(res.headers["x-cache"]).toBe("BYPASS");
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
     expect(provider.streamCalls).toBe(3);
     expect(metrics.snapshot().provider_requests).toBe(1);
     expect(metrics.snapshot().provider_errors).toBe(1);

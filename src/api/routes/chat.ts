@@ -395,6 +395,12 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+        // Hijacked responses bypass Fastify's reply headers, so the CORS hook
+        // in playground.ts does not reach them. Without these a browser using a
+        // custom (cross-origin) Gateway URL cannot read a streamed reply at all.
+        "access-control-allow-origin": "*",
+        "access-control-expose-headers":
+          "x-request-id, x-provider, x-cache, x-cache-hash, x-latency-ms, x-coalesced, x-semantic-similarity, x-lane, x-key-id, x-fallback",
         "x-request-id": requestId,
         "x-provider": serving.name,
         "x-cache": "BYPASS",
@@ -519,6 +525,9 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             const errHeaders: Record<string, string> = {
               "content-type": "application/json; charset=utf-8",
               "content-length": String(Buffer.byteLength(body)),
+              "access-control-allow-origin": "*",
+              "access-control-expose-headers":
+                "x-request-id, x-provider, x-cache, x-cache-hash, x-latency-ms, x-coalesced, x-semantic-similarity, x-lane, x-key-id, x-fallback",
               "x-request-id": requestId,
               "x-provider": serving.name,
               "x-cache": "BYPASS",
