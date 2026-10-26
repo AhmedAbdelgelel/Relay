@@ -26,7 +26,15 @@ jobs:
           cache: npm
 
       - name: Install dependencies (lockfile-exact)
-        run: npm ci
+        # Native optional packages (@huggingface/transformers → onnxruntime/sharp
+        # binaries) can fail to fetch on a flaky runner/registry. One clean retry
+        # keeps the gate honest without hiding a deterministic lockfile error.
+        run: |
+          if ! npm ci --no-audit --no-fund --foreground-scripts; then
+            echo "::warning::npm ci failed; clearing the npm cache and retrying once"
+            npm cache clean --force || true
+            npm ci --no-audit --no-fund --foreground-scripts
+          fi
 
       - name: Typecheck
         run: npm run typecheck
