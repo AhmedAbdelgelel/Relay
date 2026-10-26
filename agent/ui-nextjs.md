@@ -111,9 +111,10 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
     controls: the model is the one routing control (a picker with `All` / `$0 free` filters, a
     custom-id field, and `Refresh` that pulls the live CORS-open OpenRouter $0 tier plus the
     gateway's configured models from `GET /providers`). A new `/settings` route owns the
-    connection editor and the persisted "Advanced" toggle: off, the playground is only the chat
-    (no metrics line, evidence card, trace or session counters); on, every technical surface
-    returns. Providers gains "Add a provider" (provider · upstream key · gateway URL →
+    connection editor and the persisted "Advanced" toggle: off, the playground is the chat plus
+    one compact cache verdict/hint line per reply (the only caching info a simple user needs);
+    on, the full metrics line, evidence card, request trace and session counters return.
+    Providers gains "Add a provider" (provider · upstream key · gateway URL →
     `POST /v1/register` → issued key shown once → "Use this key") plus a refresh action.
     Sampling stays gateway-side (`temperature ?? 1.0`), so the cache identity is byte-identical
     without the UI fields — pinned by the canonical parity test.
@@ -127,11 +128,20 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
     `GET /v1/connections` is fetched alongside `/providers` on the registered lane and renders
     metadata only (provider · base URL · endpoint · created_at) — never key material. The
     mismatch 403 now carries its fix: "connect '<provider>' with your own key".
+15. Minimal-by-default caching info + fresh-checkout send — the simple playground now renders
+    a compact cache verdict badge (`HIT`/`SEMANTIC_HIT`/`MISS`/`BYPASS`/`DISABLED`) plus the
+    plain-language hint (similarity and anonymous-lane BYPASS included) for every completed
+    reply; the deep card/trace/session stay in Advanced. The default model is the gateway's
+    zero-setup `mock` provider (picker entry added), and the page adopts the active provider's
+    first `/providers` model when a real gateway default is configured. Also: honest `$0.00`
+    cost for `:free` models (unknown models show "—" instead of a fabricated price),
+    "bypassed" session wording, and all 9 reuse-policy rejection reasons in the cache page.
 
 ## Verification (results)
 
-- `web/`: `npm run lint`, `npm run typecheck`, `npm run test` (101 passing across 14 files),
-  `npm run build` (every route prerendered, incl. the new `/settings`) — green on the delivered tree.
+- `web/`: `npm run lint`, `npm run typecheck` (runs `next typegen` first so a clean
+  checkout typechecks), `npm run test` (102 passing across 14 files), `npm run build`
+  (every route prerendered, incl. the new `/settings`) — green on the delivered tree.
 - Lighthouse (harness browser): accessibility 100 · best-practices 100 · SEO 100 on `/` in both
   themes; the same bar passed on `/playground` in light before the usage panel landed.
 - Live browser pass over all five routes: try-out lane send with no key (BYPASS + hint copy),

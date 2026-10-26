@@ -20,11 +20,12 @@ decided by data, not feel.
 
 ## Tasks
 
-Shipped: T1–T13, T23 (contract, providers + conformance/capabilities, canonical key, exact cache,
-single-flight, streaming, metrics, normalization, embeddings, semantic lookup, reuse policy,
-admission, auth seed config). Open, in order: **T24** key ports → **T25** lane guard →
-**T26** chat lanes → **T27** register + usage, plus **T14** fallback+breaker → **T16**
-policy depth → **T15** eval harness. Full definitions in `agent/loop.md` §Tasks. One task per pass.
+Shipped: T1–T17, T20, T21, T23–T27 (contract, providers + capabilities, canonical key, exact cache,
+single-flight, streaming, metrics, normalization, embeddings incl. built-in ONNX, semantic lookup,
+reuse policy, admission, fallback + breaker, eval/cost metrics, policy depth, auth lanes, register,
+usage, per-tenant provider connections, README/env/LICENSE, Docker + CI, push). Remaining open:
+**T18** (live re-verification after quota reset; its cache legs were re-run manually on 2026-10-26
+with two OpenRouter free models). Full definitions in `agent/loop.md` §Tasks. One task per pass.
 
 ## Arch
 
@@ -74,11 +75,9 @@ Part B below. Invariants: no lane → 401 with no spend; invalid → 400 with no
 
 ## Non-Goals (this cycle)
 
-- Provider fallback chain + circuit breaker (open task T14).
-- Eval harness + threshold defense + cost metrics (open task T15).
-- Policy-level tenant/system-fingerprint re-checks (open task T16).
-- Prometheus/tracing export; rate-limit/quotas; tenancy dashboards;
-  multi-region.
+- Prometheus/tracing export; rate-limit/quotas; tenancy dashboards; multi-region.
+- A scheduled pgvector purge job (rows expire logically; the table is not vacuumed by the gateway).
+- Distributed single-flight/breaker if the gateway ever runs multi-instance.
 
 ## Constraints
 
@@ -109,8 +108,8 @@ Part B below. Invariants: no lane → 401 with no spend; invalid → 400 with no
 # PART B — Architecture (source of truth for implementation)
 
 > The AI agent must NOT silently modify this Part; conflicts are reported via
-> ARCHITECTURE_CONFLICT (§4). Open work (T14/T15/T16/T24–T27, see `agent/loop.md`
-> §Tasks) is tracked as open tasks, not specified here.
+> ARCHITECTURE_CONFLICT (§4). Task history and the current open work (T18) are tracked in
+> `agent/loop.md` §Tasks; T14/T15/T16/T24–T27 are shipped.
 
 ## System Overview
 
@@ -133,9 +132,9 @@ Client -> POST /v1/chat/completions
   -> Every validated reply: x-request-id, x-provider, x-cache-hash, x-latency-ms
 ```
 
-Open (not built): key/credential ports + lane guard + chat lanes + register/usage (T24–T27),
-ordered fallback chain + breaker (T14),
-policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost metrics (T15).
+Built: key/credential ports + lane guard + chat lanes + register/usage/connections (T24–T27),
+ordered fallback chain + breaker (T14), policy-level fingerprint/tenant/version re-checks (T16),
+eval harness + cost metrics (T15). Open: T18 only (live re-verification).
 
 ## Components
 
@@ -173,8 +172,8 @@ policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost met
   `llama*`/`nomic*`→ollama, else default).
 - **Constraints:** Usage preserved-or-absent (never invented); errors never leak SDK
   internals; `max_tokens` defaults are per-adapter explicit (Anthropic 1024).
-- **Why:** One interface = swappable providers; the conformance suite (T8, pending) will
-  lock this contract testably.
+- **Why:** One interface = swappable providers; the adapter wire contracts are pinned by
+  the fake-upstream e2e suite (`tests/e2e/upstream-adapters.e2e.test.ts`).
 
 ### Exact cache (`src/cache/CacheRepository.ts`, `InMemoryCache.ts`, `RedisCache.ts`, `factory.ts`)
 
@@ -211,8 +210,8 @@ policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost met
 - **Inputs:** `promptTextForEmbedding(req)` — `role: content` lines, trimmed,
   order-significant, system included.
 - **Outputs:** `number[768]` or throw.
-- **Dependencies:** None beyond fetch (gemini native `:embedContent`; ollama
-  `/api/embeddings`; mock = deterministic xorshift from sha256 seed).
+- **Dependencies:** None beyond fetch for Gemini/Ollama; the built-in `local` provider loads a
+  quantized ONNX sentence-transformer (`Xenova/all-mpnet-base-v2`) in-process and needs no key.
 - **Interface:** `EmbeddingProvider { name, dimension, embed(text, signal) }`;
   `createEmbedderFromEnv`; `EMBEDDING_DIM = 768`.
 - **Constraints:** Model identity is NOT embedded (stays a hard filter); wrong-dim output throws.
@@ -229,7 +228,9 @@ policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost met
 - **Interface:** `isReusableSemantic(req, candidate, opts)` — defense in depth: re-checks
   everything the store query filtered.
 - **Constraints:** Never serve on `reusable:false`; pure (no I/O) for eval reproducibility.
-  T16 extends with tenant/fingerprint/version reasons.
+  Reasons include `provider-mismatch`, `tenant-mismatch`, `model-mismatch`,
+  `temperature-mismatch`, `max-tokens-mismatch`, `system-fingerprint-mismatch`,
+  `policy-version-mismatch`, `below-threshold`, `empty-content` (T16 shipped).
 - **Why:** Retrieval finds CLOSE; policy decides SAFE (banking 99%-FP lesson).
 
 ### Single-flight (`src/cache/SingleFlight.ts`)
@@ -275,7 +276,7 @@ policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost met
 - **Outputs:** `request.auth` (tenant, provider) or anonymous context; `x-lane` plus `x-key-id` evidence headers; `POST /v1/register` issues a `lg_` key once; `GET /v1/usage` returns the caller tenant slice; `POST /v1/connections` upserts one credential (a reconnect replaces key and URL), `GET /v1/connections` lists metadata only — provider, base_url, effective endpoint, created_at; never key material.
 - **Dependencies:** `ApiKeyStore` (`verify`, `create`, `list`, `revoke`, `rotate`), `CredentialStore` (`save`, `get`, `list`, `remove`); `laneGuard` preHandler.
 - **Interface:** `laneGuard` — gateway key present goes registered, else provider key goes anonymous, else 401 with register hint.
-- **Constraints:** Lane pick runs before validation, provider, and cache; serving provider must equal key provider else 403 — a matching tenant credential for the serving provider bypasses that check (operator env keys stay protected); a routed provider with no key anywhere → `401 provider_key_missing` (connect hint; checked before the 403); `x-tenant-id` always ignored; no key material in logs, metrics, health, or usage.
+- **Constraints:** Lane pick runs before validation, provider, and cache; serving provider must equal key provider else 403 — a matching tenant credential for the serving provider bypasses that check (operator env keys stay protected); a configured routed provider with no key anywhere → `401 provider_key_missing` (connect hint; checked before the 403); a routed provider with no adapter in the process at all falls back to the configured default provider (zero-setup mock default — the legacy UI and fresh web checkout rely on this); `x-tenant-id` always ignored; no key material in logs, metrics, health, or usage.
 - **Why:** Try-out traffic never touches server keys or cache entries; settled users get savings plus attributed numbers; BYO credentials let one gateway key serve any provider the tenant connected — OpenRouter `:free` models work on a keyless gateway.
 
 ### Composition root (`src/server.ts`, `src/infrastructure/config.ts`)
@@ -288,8 +289,7 @@ policy-level fingerprint/tenant/version re-checks (T16), eval harness + cost met
   pgvector boot + listen).
 - **Dependencies:** Every factory; dotenv.
 - **Interface:** `buildServer()`, `buildServerAsync()`, `loadConfig(env)`.
-- **Constraints:** Secrets read only here; missing provider key, bad enum, bad `GATEWAY_API_KEYS` entry, or missing `CRED_ENC_KEY` with `DATABASE_URL` → process exit;
-  `VITEST` guard prevents auto-listen.
+- **Constraints:** Secrets read only here; bad enum, bad `GATEWAY_API_KEYS` entry, or missing `CRED_ENC_KEY` with `DATABASE_URL` → process exit; a selected `gemini`/`openai`/`anthropic` default requires its env key, while `PROVIDER=openrouter` may boot keyless (tenant BYO connections, actionable 401 until then); `VITEST` guard prevents auto-listen.
 - **Why:** Standardization: one parser, one wiring point, testable boot.
 
 ## Request Flow
@@ -353,7 +353,9 @@ POST /v1/chat/completions
 - `GET /v1/connections` (gateway key): `{ tenant_id, connections [{ provider, base_url,
   endpoint, created_at }] }` — metadata only, never key material.
 - `GET /v1/usage` (gateway key): caller tenant slice only
-  `{ tenant_id, requests, exact_hits, semantic_hits, misses, hit_rate, provider_calls_avoided, avg_provider_ms }`.
+  `{ tenant, requests, exact_hits, semantic_hits, misses, coalesced, hit_rate,
+  provider_calls_avoided, latency_ms_total, avg_latency_ms }` (web client fields; the runbook's
+  older `tenant_id`/`avg_provider_ms` names are not returned).
 - Error vocabulary: timeout/abort → `504`; rate limit → `429` (+ parsed `retry_after`
   when present); upstream 5xx/auth/404 → `502`. Auth: missing or bad key → `401`;
   revoked, expired, or provider mismatch → `403`; routed provider with no key anywhere →
@@ -373,35 +375,41 @@ POST /v1/chat/completions
 
 - **Exact cache:** `REDIS_URL` selects Redis, else bounded in-memory LRU (1000 entries, TTL
   `CACHE_TTL_S`, recency refresh). Key `llm:exact:v1:<provider>:<sha256>`. Malformed reads
-  evicted, never served.
+  evicted, never served. The exact identity is `(serving provider, canonical request)` and is
+  intentionally **not tenant-scoped** (all lanes share identical-request answers); the
+  semantic layer is tenant-scoped.
 - **Semantic cache:** `SEMANTIC_STORE=memory` (brute-force cosine, zero-setup) or `pgvector`
   (production). Table `semantic_cache`: `id, tenant_id, provider, model, prompt_hash,
   prompt_text, temperature, max_tokens, embedding vector(768), content, usage_prompt,
-  usage_completion, created_at, expires_at, hits`;
+  usage_completion, created_at, expires_at, hits, system_fingerprint, policy_version`;
   UNIQUE `(tenant_id, provider, model, prompt_hash)`; HNSW cosine index for ANN +
-  composite scope index. Schema applied automatically at boot from
-  `db/migrations/001_semantic_cache.sql`; missing vector extension fails loud.
-- **Eviction/expiry:** TTL on both stores (expired reads = misses); LRU caps (exact 1000,
-  vector 2000) with `recordHit` recency; dedupe on prompt_hash; double-write failure never
-  fails the request.
+  composite scope index on `(tenant_id, provider, model, expires_at)`. The runtime schema is
+  the embedded DDL in `src/cache/PgVectorStore.ts` (`migrateSemanticCache`) and
+  `src/auth/PgAuthStores.ts` (`migrateAuthTables`), applied at boot; missing vector extension
+  fails loud. `db/migrations/*.sql` are reference mirrors of that DDL, not a runner input.
+- **Eviction/expiry:** TTL on both stores (expired reads = misses); in-memory LRU caps
+  (exact 1000, semantic 2000) with `recordHit` recency; dedupe on prompt_hash; double-write
+  failure never fails the request. pgvector rows are filtered by `expires_at` but not purged
+  by a background job yet (known limit, documented in README).
 - **Auth:** tables `api_keys` (`key_hash UNIQUE`, expiry/revocation columns) and
-  `provider_credentials` (`PRIMARY KEY (tenant_id, provider)`, encrypted key only),
-  applied from `db/migrations/002_api_keys.sql`. Gateway keys are `lg_` plus 32B base64url;
-  only sha256 hex is stored and plaintext is shown once at register.
+  `provider_credentials` (`PRIMARY KEY (tenant_id, provider)`, encrypted key only +
+  nullable `base_url`), created by the embedded auth DDL at boot. Gateway keys are `lg_`
+  plus 32B base64url; only sha256 hex is stored and plaintext is shown once at register.
 
 ## External Integrations
 
 - **Providers (outbound fetch, no SDKs):** mock (in-process, delay + failure injection for
   tests); one OpenAI-compatible adapter (`POST {base}/chat/completions`,
   `stream_options.include_usage`, one retry without it on 400) serving OpenAI/Gemini/Ollama
-  and OpenRouter (`:free`/`openrouter/` models route to it; free tier needs no key);
-  dedicated Anthropic adapter (system folding, content blocks, token-name mapping).
+  and OpenRouter (`:free`/`openrouter/` models route to it; `:free` is $0 but still needs a
+  free account key); dedicated Anthropic adapter (system folding, content blocks, token-name
+  mapping).
   Per-model prefix routing with fallback to the configured default. Only the selected
   provider needs its key; `DATABASE_URL` only for pgvector. Adapters declare their feature
   set (`capabilities`) and the HTTP layer rejects undeclared needs with
   `400 unsupported_capability` before dispatch (T8).
-- **Embedders:** mock (deterministic), gemini (`:embedContent`), ollama (`/api/embeddings`);
-  selected by `EMBEDDING_PROVIDER`.
+- **Embedders:** mock (deterministic), local (built-in ONNX, no key/server),
+  gemini (`:embedContent`), ollama (`/api/embeddings`); selected by `EMBEDDING_PROVIDER`.
 - **Infrastructure:** Redis (optional, via `REDIS_URL`); Postgres+pgvector (optional, via
   `DATABASE_URL`). Absent backing services degrade to in-memory or MISS — never a boot
   failure (except pgvector misconfiguration, which fails loud).
@@ -491,20 +499,25 @@ Numbers are stable identifiers; gaps are retired entries — never reuse a numbe
   depth). Banking lesson: low defaults gave ~99% FP on some models; near-miss distractors
   (topical 0.8–0.9, semantic near-miss 0.85–0.95) must be in the eval set. Admit only
   successful, non-empty, normalized responses with `usage` preserved-or-absent.
-- **Fallback (planned, T14):** ordered target list → transient retry (429/5xx/timeout,
+- **Fallback (T14, shipped):** ordered target list → transient retry (429/5xx/timeout,
   exp backoff + jitter) → failover → per-target breaker (open after N fails, cooldown
   skip) → `502` when exhausted. `x-provider` = serving target, `x-fallback:true` on
   failover. Streaming failover only before first token. Cache under serving-provider key.
+  The chain is only built for provider-agnostic model ids: a model that names a provider
+  (`gpt-*`, `*:free`, …) retries/fails inside that provider, because another vendor would
+  404 the foreign id and mask the real error (live-reproduced). The in-process mock is only
+  registered when it is the configured default provider, so a real deployment can never
+  answer a failed request with fabricated mock content.
 - **Canonical request/response:** trim model + content (inner whitespace significant),
   message order significant, temperature default 1.0, `max_tokens` omitted-when-absent,
   `stream` excluded from key; Anthropic folds ALL system messages into native `system`;
   normalize (`normalizeResponseText()` + hold-back streaming normalizer) BEFORE cache
-  admission; `usage` preserved when reported, `undefined` otherwise. T8 adds per-adapter
-  capability declarations so unsupported requests get explicit `400`.
-- **Eval (planned, T15):** no threshold ships without data — labeled versioned dataset
+  admission; `usage` preserved when reported, `undefined` otherwise. Capability declarations
+  make unsupported requests an explicit `400`.
+- **Eval (T15, shipped):** no threshold ships without data — labeled versioned dataset
   (duplicates / paraphrases / near-miss / cross-domain / system-change / tenant-change),
   sweep 0.60→0.95 reporting precision/recall/FP/FN, safe-reuse rate, latency + $ saved,
-  cost-aware optimum locked in config with a report link.
+  cost-aware optimum locked in config with a report link (`evaluation/report.md`).
 
 ---
 

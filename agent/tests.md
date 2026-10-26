@@ -59,17 +59,18 @@ Every Acceptance Criterion in `agent/loop.md` §Tasks maps to at least one test;
 ## 3. Running
 
 ```powershell
-npm test                  # offline: unit + integration + contract
+npm test                  # offline: unit + integration + contract (live suites self-skip)
 npm run typecheck         # tsc --noEmit -p tsconfig.check.json
-$env:GEMINI_API_KEY=""; npm test  # guaranteed-offline proof (live test skips without the key)
-npm run test:live         # opt-in live Gemini (needs $env:GEMINI_API_KEY)
+$env:GEMINI_API_KEY=""; npm test  # guaranteed-offline proof (live tests need explicit flags)
+npm run test:live         # opt-in OpenRouter free-tier live leg (needs $env:OPEN_ROUTER_KEY)
 ```
 
 A task pass must state the counts it produced.
 
-Live-spend note: `tests/integration/gemini-live.test.ts` auto-runs only when
-`GEMINI_API_KEY` is present (via `describe.skipIf`). For deterministic CI, keep the key
-out of the test env. No live provider spend in CI otherwise.
+Live-spend note: every live suite is two-factor opt-in — `OPENROUTER_LIVE_TEST=1`
+(+ key, `:free` models only; `npm run test:live` sets the flag), `GEMINI_LIVE_TEST=1`
+(+ key), `EMBEDDING_LIVE_TEST=1`, `REDIS_LIVE_TEST=1`. A key in `.env` alone never
+triggers a live call, so the default sweep and CI stay hermetic and free.
 
 ## 4. Test rules
 

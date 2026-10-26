@@ -84,9 +84,10 @@ recorded by flipping the task Status in §Tasks below.
 
 # §Tasks
 
-> Shipped tasks (T1–T13, T23) are `completed` and recorded here as history; open
-> work (T14, T16, T15, T17–T21, T24–T27) is `pending` in dependency order.
-> T22 is superseded by T23–T27 (Token mode). A task becomes
+> Shipped tasks (T1–T17, T19–T21, T23–T27) are `completed` and recorded here as history;
+> **T18** is the only open task (live re-verification; its cache legs were re-run manually on
+> 2026-10-26 against two OpenRouter free models with the built-in embedder). T22 is
+> superseded by T23–T27 (Token mode). A task becomes
 > `completed` only per the completion rule above. `Files:` lines declare each
 > task's file scope for the scope check.
 
@@ -683,7 +684,7 @@ version-stamps entries so eval-driven policy changes never silently reinterpret 
    and `policy_version` stamped at admission; NULL fingerprint skips the check (legacy rows),
    recorded in the eval report.
 3. Both stores + admission path persist and return the new fields; migration
-   `db/migrations/002_semantic_system_fp.sql` (nullable columns, no backfill).
+   `db/migrations/004_semantic_system_fp.sql` (nullable columns, no backfill).
 4. Policy version constant bumps invalidate old entries lazily on read.
 
 ### Related Architecture
@@ -693,7 +694,7 @@ version-stamps entries so eval-driven policy changes never silently reinterpret 
 ### Files
 
 `src/policy/reuse.ts`, `src/cache/SemanticCacheStore.ts`, `PgVectorStore.ts`,
-`InMemoryVectorStore.ts`, optional `db/migrations/002_semantic_system_fp.sql`;
+`InMemoryVectorStore.ts`, optional `db/migrations/004_semantic_system_fp.sql`;
 extend `tests/unit/semantic-reuse.test.ts` + `tests/integration/semantic-cache.test.ts`.
 No new endpoints.
 
@@ -757,7 +758,7 @@ None — correctness bugfix, blocks shipping.
 
 ## T18 - Live re-verification after quota reset (semantic + TTL legs)
 
-Status: pending
+Status: pending (cache legs re-verified live 2026-10-26 on two OpenRouter free models with the built-in embedder; the original Gemini-embedder/quota run stays for a later pass)
 
 ### Goal
 
@@ -796,7 +797,7 @@ T17 (empty-admission fix lands first so live legs measure correct behavior); ext
 
 ## T19 - Push local commits to remote
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -832,7 +833,7 @@ None — do any time; do before any deploy.
 
 ## T20 - README + .env.example + LICENSE
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -869,7 +870,7 @@ None.
 
 ## T21 - Dockerfile + CI workflow
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -979,7 +980,7 @@ None.
 
 ## T24 - Key and credential ports
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -1017,7 +1018,7 @@ T23 (tables and seed config it builds on).
 
 ## T25 - Lane guard
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -1054,7 +1055,7 @@ T24 (stores the guard verifies against).
 
 ## T26 - Chat with two lanes
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -1092,7 +1093,7 @@ T25 (lane contract the chat route reuses).
 
 ## T27 - Register and own usage
 
-Status: pending
+Status: completed
 
 ### Goal
 
@@ -1176,9 +1177,10 @@ Semantic cache:
 - `SEMANTIC_THRESHOLD` (default `0.92`; eval-gated — see `agent/review.md` §5)
 - `SEMANTIC_TOP_K` (default `3`), `SEMANTIC_TTL_S` (default `3600`)
 - `SEMANTIC_STORE` — `memory | pgvector` (default `memory`)
-- `EMBEDDING_PROVIDER` — `mock | gemini | ollama` (default `mock`), `EMBEDDING_MODEL`
-- `DATABASE_URL` (required for `SEMANTIC_STORE=pgvector`; schema applied automatically at
-  boot from `db/migrations/001_semantic_cache.sql`)
+- `EMBEDDING_PROVIDER` — `mock | gemini | ollama | local` (default `mock`), `EMBEDDING_MODEL`
+- `DATABASE_URL` (required for `SEMANTIC_STORE=pgvector`; the runtime schema is the embedded
+  DDL in `src/cache/PgVectorStore.ts` / `src/auth/PgAuthStores.ts`, applied at boot;
+  `db/migrations/*.sql` are reference mirrors only)
 - `SAVED_USD_PER_1K_TOKENS` (default `0` = savings off; set to price reused tokens,
   e.g. `0.002` — drives `estimated_cost_saved`)
 
@@ -1196,8 +1198,10 @@ model prefix a client may send):
 - `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-4`), `ANTHROPIC_BASE_URL`
 - `OPEN_ROUTER_KEY`, `OPENROUTER_MODEL`
   (default `nvidia/nemotron-3-super-120b-a12b:free`), `OPENROUTER_BASE_URL`
-  (default `https://openrouter.ai/api/v1`). No key is required for `:free` models;
-  models ending `:free` or prefixed `openrouter/` route to openrouter automatically.
+  (default `https://openrouter.ai/api/v1`). `:free` models are $0 but still need a free
+  OpenRouter account key; models ending `:free` or prefixed `openrouter/` route to
+  openrouter automatically. A keyless gateway still boots and can serve BYO tenant
+  credentials (or returns the actionable `401 provider_key_missing`).
 
 ## `GET /metrics` keys (in-memory, process lifetime)
 
@@ -1220,18 +1224,23 @@ Derived: `semantic_lookups`, `avg_semantic_score`, `cache_lookups`, `avg_cache_l
 - Lane pick runs before validation, provider, and cache. No lane → `401` with register hint, no spend. Registered: serving provider must equal key provider else `403`. Anonymous: `x-provider-key` required, cache `BYPASS`, upstream uses the header key only.
 - `x-tenant-id` header is always ignored — tenant comes from the verified gateway key.
 
-- Semantic entries stay scoped per tenant; exact cache keys are per provider+request.
-  Policy-level tenant re-checks are open work (T16).
+- Semantic entries stay scoped per tenant; exact cache keys are per provider+request and
+  intentionally shared across tenants. Policy-level tenant/system-fingerprint/policy-version
+  re-checks are implemented (T16).
 - Cache/Redis or pgvector down → requests still succeed (MISS + `cache_lookup_failed` /
-  `semantic_errors` climb); never a 5xx from the cache layer.
+  `semantic_errors` climb); never a 5xx from the cache layer. A credential that cannot be
+  decrypted (rotated `CRED_ENC_KEY`) degrades to `unavailable` instead of a 500.
 - Provider down/timeout → `429|502|504` per error mapping; SDK internals never leak.
+- A provider-specific model id (`gpt-*`, `*:free`, …) retries/fails inside its provider and
+  never fails over to a different vendor (avoids foreign-model 404s masking the real error).
 - `PROVIDER`/`EMBEDDING_PROVIDER`/`SEMANTIC_STORE` typos fail loud at startup.
 
 ## Tests + live spend
 
-`npm test` is offline by design EXCEPT `tests/integration/gemini-live.test.ts`, which
-auto-runs whenever `GEMINI_API_KEY` is present in the environment (it uses
-`describe.skipIf`). For deterministic CI, keep the key out of the test env.
-`tests/integration/openrouter-live.test.ts` follows the same opt-in pattern via
-`OPEN_ROUTER_KEY` and hits only `:free` models ($0 tier, 3 requests per run).
-`tests/contract/provider-conformance.test.ts` (T8) is fully offline.
+`npm test` is hermetic and offline: the live suites self-skip unless their explicit
+opt-in flag is set — `OPENROUTER_LIVE_TEST=1` (+ `OPEN_ROUTER_KEY`, hits only `:free`
+models, $0 tier; `npm run test:live` sets the flag), `GEMINI_LIVE_TEST=1` (+ key),
+`EMBEDDING_LIVE_TEST=1` (real ONNX model), `REDIS_LIVE_TEST=1` (real Redis). A key in
+`.env` alone never triggers a live call. The adapter wire contracts (T8) are covered
+offline by `tests/e2e/upstream-adapters.e2e.test.ts` and the rest of `tests/e2e/`.
+

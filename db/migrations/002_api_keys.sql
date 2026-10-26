@@ -1,3 +1,8 @@
+-- 002: gateway API keys + encrypted provider credentials.
+-- REFERENCE MIRROR ONLY: the runtime schema is the embedded DDL in
+-- src/auth/PgAuthStores.ts (migrateAuthTables), applied at boot. Nothing
+-- executes this file; keep it in sync with the code.
+
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -20,3 +25,4 @@ CREATE TABLE IF NOT EXISTS provider_credentials (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, provider)
 );
+

@@ -1,3 +1,8 @@
+-- 001: semantic cache table + pgvector extension (PostgreSQL 13+, pgvector).
+-- REFERENCE MIRROR ONLY: the runtime schema is the embedded DDL in
+-- src/cache/PgVectorStore.ts (migrateSemanticCache), applied at boot. Nothing
+-- executes this file; keep it in sync with the code.
+
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -27,3 +32,4 @@ CREATE INDEX IF NOT EXISTS semantic_cache_embedding_hnsw
 
 CREATE INDEX IF NOT EXISTS semantic_cache_scope_idx
   ON semantic_cache (tenant_id, provider, model, expires_at);
+
