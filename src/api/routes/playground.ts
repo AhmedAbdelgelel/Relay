@@ -35,7 +35,7 @@ export function registerPlayground(app: FastifyInstance): void {
     reply.header("access-control-allow-methods", "GET, POST, OPTIONS");
     reply.header(
       "access-control-expose-headers",
-      "x-request-id, x-provider, x-cache, x-cache-hash, x-latency-ms, x-coalesced, x-semantic-similarity, x-lane, x-key-id",
+      "x-request-id, x-provider, x-cache, x-cache-hash, x-latency-ms, x-coalesced, x-semantic-similarity, x-lane, x-key-id, x-fallback",
     );
     if (req.method === "OPTIONS") {
       reply.status(204).send();

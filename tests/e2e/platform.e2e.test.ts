@@ -112,6 +112,7 @@ describe("playground surface", () => {
     expect(expose).toContain("x-lane");
     expect(expose).toContain("x-key-id");
     expect(expose).toContain("x-cache-hash");
+    expect(expose).toContain("x-fallback");
 
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.headers["access-control-allow-origin"]).toBe("*");
@@ -151,6 +152,27 @@ describe("request validation", () => {
     }
     expect(provider.calls).toBe(0);
     expect(metrics.snapshot().requests_total).toBe(0);
+    await app.close();
+  });
+
+  it("malformed JSON body is a standardized 400 with the echoed request id", async () => {
+    const { app } = makeApp({ auth: lanes.auth });
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: {
+        authorization: `Bearer ${lanes.laneFor("mock").key}`,
+        "content-type": "application/json",
+        "x-request-id": "req-parse-1",
+      },
+      payload: '{"model": "m",',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.headers["x-request-id"]).toBe("req-parse-1");
+    const body = JSON.parse(res.body) as { error: { code: string; message: string; request_id: string } };
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.request_id).toBe("req-parse-1");
+    expect(typeof body.error.message).toBe("string");
     await app.close();
   });
 

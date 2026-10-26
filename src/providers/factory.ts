@@ -56,7 +56,16 @@ export function createProviderFromEnv(cfg: GatewayConfig, mockOverrides?: { dela
 
 export function createProvidersFromEnv(cfg: GatewayConfig): Map<string, ProviderAdapter> {
   const map = new Map<string, ProviderAdapter>();
-  map.set("mock", new MockProvider());
+  // The in-process mock is a stand-in for an LLM, not a serving provider: a
+  // non-mock deployment must never expose it, because the fallback chain
+  // iterates this map. Live-reproduced bug: with PROVIDER=openrouter and a
+  // failing/rate-limited upstream, the chain reached "mock" and answered 200
+  // with `x-fallback:true` plus fabricated mock-echo content. Only the active
+  // mock dev default may register the mock adapter; no model prefix routes to
+  // it, so excluding it never affects prefix routing.
+  if (cfg.provider === "mock") map.set("mock", new MockProvider());
+  // Ollama needs no key and is routable through llama*/nomic* model prefixes,
+  // so it stays available as a target; a dead endpoint fails fast.
   map.set("ollama", new OpenAICompatibleProvider({
     name: "ollama",
     baseURL: cfg.ollamaBaseUrl,
@@ -87,12 +96,17 @@ export function createProvidersFromEnv(cfg: GatewayConfig): Map<string, Provider
       defaultModel: cfg.anthropicModel,
     }));
   }
-  map.set("openrouter", new OpenAICompatibleProvider({
-    name: "openrouter",
-    baseURL: cfg.openRouterBaseUrl,
-    apiKey: cfg.openRouterKey,
-    defaultModel: cfg.openRouterModel,
-  }));
+  // OpenRouter needs an account key even for `:free` models; without one it
+  // must not appear as a configured target (requests get an actionable
+  // provider_key_missing 401 from the pre-check instead).
+  if (cfg.openRouterKey) {
+    map.set("openrouter", new OpenAICompatibleProvider({
+      name: "openrouter",
+      baseURL: cfg.openRouterBaseUrl,
+      apiKey: cfg.openRouterKey,
+      defaultModel: cfg.openRouterModel,
+    }));
+  }
   return map;
 }
 

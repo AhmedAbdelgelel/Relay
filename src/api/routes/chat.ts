@@ -59,6 +59,36 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
   const breaker = new TargetBreaker();
   const laneGuard = createLaneGuard(app, deps.auth.apiKeys);
 
+  // Fastify-level failures (malformed JSON, unsupported media type, ...) must
+  // use the same error vocabulary as every other rejection: the OpenAI-style
+  // `{error:{code,message,request_id}}` envelope plus the echoed request id.
+  app.setErrorHandler((error, request, reply) => {
+    if (reply.sent) return;
+    const requestId = (request.headers["x-request-id"] as string) || randomUUID();
+    const rawStatus = Number((error as { statusCode?: unknown }).statusCode);
+    const status = Number.isFinite(rawStatus) && rawStatus >= 400 && rawStatus < 500 ? rawStatus : 500;
+    const code =
+      status === 400
+        ? "invalid_request"
+        : status === 401
+          ? "unauthorized"
+          : status === 403
+            ? "forbidden"
+            : status === 404
+              ? "not_found"
+              : status === 413
+                ? "payload_too_large"
+                : status === 415
+                  ? "unsupported_media_type"
+                  : status === 429
+                    ? "rate_limited"
+                    : "internal_error";
+    const message =
+      status >= 500 ? "internal server error" : error instanceof Error ? error.message : String(error);
+    log({ request_id: requestId, status, error_code: code });
+    reply.header("x-request-id", requestId).status(status).send({ error: { code, message, request_id: requestId } });
+  });
+
   app.get("/metrics", async () => metrics.snapshot());
 
   app.post("/v1/chat/completions", { preHandler: laneGuard }, async (request, reply) => {
@@ -152,7 +182,12 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     let hijacked = false;
 
     try {
-      const chain = registered ? buildChain(serving, deps.providers) : buildChain(serving);
+      // Provider-specific model ids must not fail over to an unrelated
+      // provider: a `:free`/`gemini-*`/`gpt-*` id sent to another adapter is a
+      // guaranteed 404 that masks the real error and multiplies throttling
+      // (live-reproduced: OpenRouter 429 surfaced as "gemini 404"). Unknown
+      // model ids still use the documented ordered fallback chain.
+      const chain = registered && routedName === null ? buildChain(serving, deps.providers) : buildChain(serving);
       const primary = chain[0]!.adapter;
 
       if (!req.stream) {
@@ -349,6 +384,10 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
 
       metrics.inc("requests_total");
       if (registered) metrics.observeTenantRequest(tenant);
+      // Streams bypass the cache but still reach a provider (or a breaker):
+      // count them in provider_requests like the non-stream flight does, so
+      // /metrics does not silently under-count streaming traffic.
+      metrics.inc("provider_requests");
       hijacked = true;
       reply.hijack();
       const streamId = `chatcmpl-${Date.now()}`;
@@ -466,6 +505,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       return;
     } catch (err) {
       const gw = err instanceof GatewayError ? err : toGatewayError(serving.name, err);
+      if (req.stream) metrics.inc("provider_errors");
       log({ request_id: requestId, provider: serving.name, status: gw.status, latency_ms: Date.now() - start, stream: req.stream, error_code: gw.code });
       if (reply.raw.headersSent) {
         try { reply.raw.end(); } catch { /* already closed */ }

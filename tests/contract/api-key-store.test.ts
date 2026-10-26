@@ -450,4 +450,27 @@ describe("CredentialStore contract — connections (BYO key + URL)", () => {
     expect(all).toContain("base_url TEXT NULL");
     expect(all).toContain("ALTER TABLE provider_credentials ADD COLUMN IF NOT EXISTS base_url TEXT NULL");
   });
+
+  it("memory: an undecryptable stored credential degrades to unavailable instead of throwing", async () => {
+    // Live failure mode: rotating CRED_ENC_KEY makes every stored provider key
+    // undecryptable; the chat route must degrade to the env adapter/403, never 500.
+    const store = new InMemoryCredentialStore(cipher);
+    await store.save("t1", "openai", "sk-a");
+    const internals = store as unknown as {
+      rows: Map<string, Map<string, { encKey: string; baseUrl: string | null; createdAt: string }>>;
+    };
+    internals.rows.get("t1")!.get("openai")!.encKey = "v1:not-a-valid-payload";
+    await expect(store.get("t1", "openai")).resolves.toMatchObject({ status: "unavailable" });
+    // The tenant still lists metadata (never key material) even when key is bad.
+    const listed = await store.list("t1");
+    if (listed.status !== "ok") throw new Error(`expected ok, got ${listed.status}`);
+    expect(JSON.stringify(listed.connections)).not.toContain("not-a-valid");
+  });
+
+  it("pg: an undecryptable row degrades to unavailable instead of throwing", async () => {
+    const db = fakeDb([{ enc_key: "v1:not-a-valid-payload", base_url: null }]);
+    await expect(new PgCredentialStore(db, cipher).get("t9", "openai")).resolves.toMatchObject({
+      status: "unavailable",
+    });
+  });
 });

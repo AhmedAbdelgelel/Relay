@@ -324,6 +324,7 @@ describe("register + usage", () => {
 
     const usage = await app.inject({ method: "GET", url: "/v1/usage", headers: { authorization: `Bearer ${issued.key}`, "x-tenant-id": "spoofed" } });
     expect(usage.statusCode).toBe(200);
+    expect(usage.headers["x-request-id"]).toBeTruthy();
     const mine = json<{ tenant: string; requests: number; exact_hits: number; misses: number; provider_calls_avoided: number }>(usage);
     expect(mine.tenant).toBe(issued.tenant_id);
     expect(mine.requests).toBe(2);

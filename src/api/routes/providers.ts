@@ -27,7 +27,7 @@ export function buildProviderStatus(cfg: GatewayConfig, providers: Map<string, P
     { id: "anthropic", endpoint: cfg.anthropicBaseUrl, models: [cfg.anthropicModel], configured: cfg.anthropicApiKey !== "" },
     { id: "gemini", endpoint: cfg.geminiBaseUrl, models: [cfg.geminiModel], configured: cfg.geminiApiKey !== "" },
     { id: "ollama", endpoint: cfg.ollamaBaseUrl, models: [cfg.ollamaModel], configured: true },
-    { id: "openrouter", endpoint: cfg.openRouterBaseUrl, models: [cfg.openRouterModel], configured: true },
+    { id: "openrouter", endpoint: cfg.openRouterBaseUrl, models: [cfg.openRouterModel], configured: cfg.openRouterKey !== "" },
     { id: "mock", endpoint: "in-process", models: ["mock"], configured: true },
   ];
   return defs.map((d) => ({

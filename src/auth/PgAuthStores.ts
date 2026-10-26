@@ -222,7 +222,13 @@ export class PgCredentialStore implements CredentialStore {
     }
     const row = rows[0];
     if (!row) return { status: "not_found" };
-    return { status: "ok", providerKey: this.cipher.decrypt(row.enc_key), baseUrl: row.base_url };
+    // A rotated/tampered CRED_ENC_KEY must degrade like an auth-store outage
+    // (503/fallback), never escape as an unhandled 500 on a chat request.
+    try {
+      return { status: "ok", providerKey: this.cipher.decrypt(row.enc_key), baseUrl: row.base_url };
+    } catch {
+      return { status: "unavailable", reason: "credential decrypt failed (wrong CRED_ENC_KEY or tampered row)" };
+    }
   }
 
   async list(tenant: string): Promise<CredentialListResult> {

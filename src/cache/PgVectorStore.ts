@@ -190,6 +190,13 @@ export async function migrateSemanticCache(db: SqlClient): Promise<void> {
        ADD COLUMN IF NOT EXISTS system_fingerprint TEXT NULL,
        ADD COLUMN IF NOT EXISTS policy_version INTEGER NULL`,
   );
+  // Keep the runtime schema identical to db/migrations/001_semantic_cache.sql:
+  // the lookup filters on (tenant_id, provider, model, expires_at), so the
+  // composite scope index is what keeps findSimilar from scanning every row.
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS semantic_cache_scope_idx
+       ON semantic_cache (tenant_id, provider, model, expires_at)`,
+  );
   try {
     await db.query(
       `CREATE INDEX IF NOT EXISTS semantic_cache_embedding_hnsw

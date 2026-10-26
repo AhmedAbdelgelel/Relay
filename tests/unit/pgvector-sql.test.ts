@@ -131,6 +131,14 @@ describe("PgVectorStore (SQL contract, no live Postgres)", () => {
     expect(all).toContain("hnsw");
   });
 
+  it("migrate: creates the scope index the findSimilar query needs (parity with 001_semantic_cache.sql)", async () => {
+    const db = fakeDb();
+    await migrateSemanticCache(db);
+    const all = db.seen.map((s) => s.text).join("\n");
+    expect(all).toContain("semantic_cache_scope_idx");
+    expect(all).toContain("(tenant_id, provider, model, expires_at)");
+  });
+
   it("migrate: upgrades existing tables with the identity columns", async () => {
     const db = fakeDb();
     await migrateSemanticCache(db);

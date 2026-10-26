@@ -68,6 +68,14 @@ function bool(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean 
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
+function positiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const n = num(env, name, fallback);
+  if (!Number.isInteger(n)) {
+    throw new Error(`${name} must be a positive integer; got "${env[name]}"`);
+  }
+  return n;
+}
+
 function frac(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
@@ -129,7 +137,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     throw new Error("CRED_ENC_KEY is required when DATABASE_URL is set (provider keys are stored encrypted)");
   }
   return {
-    port: num(env, "PORT", 3000),
+    port: positiveInt(env, "PORT", 3000),
     provider,
     upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", 25000),
     geminiApiKey: str(env, "GEMINI_API_KEY"),
@@ -153,7 +161,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     embeddingModel: str(env, "EMBEDDING_MODEL"),
     semanticEnabled: bool(env, "SEMANTIC_ENABLED", true),
     semanticThreshold: frac(env, "SEMANTIC_THRESHOLD", 0.92),
-    semanticTopK: num(env, "SEMANTIC_TOP_K", 3),
+    semanticTopK: positiveInt(env, "SEMANTIC_TOP_K", 3),
     semanticTtlSec: num(env, "SEMANTIC_TTL_S", 3600),
     semanticStore,
     databaseUrl,

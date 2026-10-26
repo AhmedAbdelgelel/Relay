@@ -52,6 +52,9 @@ describe("SSE happy paths", () => {
     expect(terminal["choices"]).toEqual([]);
     expect(terminal["usage"]).toEqual({ prompt_tokens: 10, completion_tokens: 5 });
     expect(metrics.snapshot().tokens_out).toBe(5);
+    // Streams reach a provider; /metrics must count them in provider_requests
+    // (live gap: it only counted non-stream flights).
+    expect(metrics.snapshot().provider_requests).toBe(1);
     await app.close();
   });
 
@@ -128,6 +131,8 @@ describe("pre-first-token failures are real JSON statuses", () => {
     expect(res.headers["x-key-id"]).toBe(lanes.laneFor("mock").keyId);
     expect(res.headers["x-cache"]).toBe("BYPASS");
     expect(provider.streamCalls).toBe(3);
+    expect(metrics.snapshot().provider_requests).toBe(1);
+    expect(metrics.snapshot().provider_errors).toBe(1);
     await app.close();
   });
 

@@ -1,10 +1,14 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CredentialStore } from "../../src/auth/CredentialStore.js";
+import { buildProviderStatus } from "../../src/api/routes/providers.js";
 import { GatewayError } from "../../src/domain/types.js";
+import { loadConfig } from "../../src/infrastructure/config.js";
 import { metrics } from "../../src/observability/metrics.js";
+import { createProviderFromEnv, createProvidersFromEnv } from "../../src/providers/factory.js";
+import { buildChain } from "../../src/routing/fallback.js";
 import { laneAuth } from "../helpers/lane.js";
-import { chat, makeApp, ScriptedProvider, sendJson, startFakeUpstream } from "./harness.js";
+import { chat, makeApp, ScriptedProvider, sendJson, startFakeUpstream, TEST_ENV, withEnv } from "./harness.js";
 
 const lanes = await laneAuth(
   "mock",
@@ -67,7 +71,23 @@ describe("model-prefix routing", () => {
     await app.close();
   });
 
-  it("a prefix with no configured adapter falls back to the default provider", async () => {
+  it("an unknown model prefix falls back to the default provider", async () => {
+    const mock = new ScriptedProvider("mock");
+    const providers = new Map([["mock", mock]]);
+    const { app } = makeApp({ auth: lanes.auth, provider: mock, providers });
+    const res = await chat(app, lanes.laneFor("mock").key, ask("mystery-model-9000", "no prefix"));
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-provider"]).toBe("mock");
+    expect(mock.calls).toBe(1);
+    await app.close();
+  });
+
+  it("a known prefix whose provider is not configured falls back to the default adapter", async () => {
+    // Documented zero-setup behavior the legacy UI relies on: the mock
+    // gateway serves a gemini-* selection with the default adapter. When the
+    // routed provider IS configured but keyless, the provider_key_missing
+    // pre-check still fires (feature-contract D2 note). Only an absent
+    // adapter falls back.
     const mock = new ScriptedProvider("mock");
     const providers = new Map([["mock", mock]]);
     const { app } = makeApp({ auth: lanes.auth, provider: mock, providers });
@@ -75,6 +95,26 @@ describe("model-prefix routing", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-provider"]).toBe("mock");
     expect(mock.calls).toBe(1);
+    await app.close();
+  });
+
+  it("a connected tenant credential still serves a routed provider without an env key", async () => {
+    const mock = new ScriptedProvider("mock");
+    const providers = new Map([["mock", mock]]);
+    const { app } = makeApp({ auth: lanes.auth, provider: mock, providers });
+    const lane = lanes.laneFor("openrouter");
+    const upstream = await startFakeUpstream((_hit, res) =>
+      sendJson(res, 200, { id: "or-1", model: "x/y:free", choices: [{ message: { content: "connected ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+    );
+    const saved = await lanes.auth.credentials.save(lane.tenant, "openrouter", "sk-tenant", upstream.url);
+    expect(saved.status).toBe("ok");
+    const res = await chat(app, lane.key, ask("x/y:free", "connected route"));
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-provider"]).toBe("openrouter");
+    expect(upstream.hits.length).toBe(1);
+    expect(mock.calls).toBe(0);
+    await lanes.auth.credentials.remove(lane.tenant, "openrouter");
+    await upstream.close();
     await app.close();
   });
 
@@ -265,6 +305,95 @@ describe("fallback chain", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-provider"]).toBe("mock");
     expect(mock.calls).toBe(1);
+    await app.close();
+  });
+});
+
+describe("production composition (fake-fallback regression)", () => {
+  const compose = (env: Record<string, string>) => {
+    const cfg = withEnv({ ...TEST_ENV, ...env }, () => loadConfig());
+    return { cfg, providers: createProvidersFromEnv(cfg) };
+  };
+
+  it("a non-mock default never exposes the in-process mock adapter", () => {
+    // Regression: the fallback chain walks createProvidersFromEnv(); a mock
+    // entry in a real deployment turned provider failures into fabricated 200s.
+    const { providers } = compose({ PROVIDER: "openrouter", OPEN_ROUTER_KEY: "sk-or-test" });
+    expect(providers.has("mock")).toBe(false);
+    expect(providers.has("openrouter")).toBe(true);
+  });
+
+  it("a provider-specific model id never fails over to another provider (429 stays 429)", async () => {
+    // Live-reproduced: an OpenRouter :free 429 was retried, then the same
+    // openrouter-only model id was sent to ollama/gemini, ending as a
+    // misleading "gemini 404 provider_not_found". The routed id is
+    // provider-specific, so the chain must stay on that provider.
+    const openrouter = failing("openrouter", 429, true);
+    const gemini = new ScriptedProvider("gemini");
+    const providers = new Map([
+      ["openrouter", openrouter],
+      ["gemini", gemini],
+    ]);
+    const localLanes = await laneAuth("openrouter");
+    const { app } = makeApp({ auth: localLanes.auth, provider: openrouter, providers });
+    const res = await chat(app, localLanes.laneFor("openrouter").key, ask("x/y:free", "provider specific 429"));
+    expect(res.statusCode).toBe(429);
+    expect((JSON.parse(res.body) as { error: { code: string } }).error.code).toBe("provider_rate_limited");
+    expect(openrouter.calls).toBe(3); // two transient retries, same provider
+    expect(gemini.calls).toBe(0);
+    expect(metrics.snapshot().fallback_count).toBe(0);
+    await app.close();
+  });
+
+  it("the zero-setup mock default still exposes mock", () => {
+    const { providers } = compose({ PROVIDER: "mock" });
+    expect(providers.has("mock")).toBe(true);
+  });
+
+  it("a keyless OpenRouter deployment reports it unconfigured and keeps it out of the map", () => {
+    const { cfg, providers } = compose({ PROVIDER: "openai", OPENAI_API_KEY: "sk-openai-test", OPEN_ROUTER_KEY: "" });
+    expect(providers.has("openrouter")).toBe(false);
+    const status = buildProviderStatus(cfg, providers).find((p) => p.id === "openrouter")!;
+    expect(status.configured).toBe(false);
+  });
+
+  it("buildChain lists each provider once even when a tenant credential shadows the env adapter", async () => {
+    // A tenant BYO credential is a providerWithKey() adapter — same name as the
+    // operator's env adapter but not the same object. Listing both would mix
+    // breaker state and silently retry a tenant's failing key on the operator's
+    // env key/endpoint.
+    const tenantAdapter = new ScriptedProvider("openrouter");
+    const envAdapter = new ScriptedProvider("openrouter");
+    const alt = new ScriptedProvider("alt");
+    const chain = buildChain(tenantAdapter, new Map([
+      ["mock", new ScriptedProvider("mock")],
+      ["openrouter", envAdapter],
+      ["alt", alt],
+    ]));
+    expect(chain.map((t) => t.name)).toEqual(["openrouter", "mock", "alt"]);
+    expect(chain[0]!.adapter).toBe(tenantAdapter);
+  });
+
+  it("a failed real provider returns a clean 502 instead of a fabricated mock 200", async () => {
+    // Live-reproduced before the fix: PROVIDER=openrouter + unreachable upstream
+    // -> chain fell through to the in-process mock and answered 200
+    // `x-fallback:true` with "mock echo (...)" content. Both remaining targets
+    // are dead here, so the only honest outcome is an exhausted-chain 502.
+    const env = {
+      PROVIDER: "openrouter",
+      OPEN_ROUTER_KEY: "sk-or-test",
+      OPENROUTER_BASE_URL: "http://127.0.0.1:9/v1",
+      OLLAMA_BASE_URL: "http://127.0.0.1:9/v1",
+      UPSTREAM_TIMEOUT_MS: "1500",
+    };
+    const cfg = withEnv({ ...TEST_ENV, ...env }, () => loadConfig());
+    const provider = createProviderFromEnv(cfg);
+    const providers = createProvidersFromEnv(cfg);
+    const { app } = makeApp({ auth: lanes.auth, provider, providers, env });
+    const res = await chat(app, lanes.laneFor("openrouter").key, ask("qwen/qwen3.8-27b:free", "fake fallback probe"));
+    expect(res.statusCode).toBe(502);
+    expect(res.body).not.toContain("mock echo");
+    expect((JSON.parse(res.body) as { error: { code: string } }).error.code).toBe("provider_error");
     await app.close();
   });
 });

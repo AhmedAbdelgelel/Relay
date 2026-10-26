@@ -19,6 +19,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps):
 
   app.get("/v1/usage", { preHandler: laneGuard }, async (request, reply) => {
     const requestId = (request.headers["x-request-id"] as string) || randomUUID();
+    reply.header("x-request-id", requestId);
     const auth = request.auth!;
     if (auth.lane !== "registered") {
       metrics.inc("auth_rejects_total");

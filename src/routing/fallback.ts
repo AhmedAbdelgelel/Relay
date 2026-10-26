@@ -26,9 +26,13 @@ export function buildChain(primary: ProviderAdapter, all?: Map<string, ProviderA
   const chain: FallbackTarget[] = [{ name: primary.name, adapter: primary }];
   if (!all) return chain;
   for (const [name, adapter] of all) {
-    if (name !== primary.name && !chain.some((t) => t.adapter === adapter)) {
-      chain.push({ name, adapter });
-    }
+    // De-duplicate by provider NAME, not adapter identity: a tenant credential
+    // (providerWithKey / tenant base URL) is a different object than the
+    // operator's env adapter for the same provider, and listing both would
+    // (a) mix breaker state for one name and (b) silently fail a tenant's BYO
+    // key over to the operator's env key/endpoint. One target per provider.
+    if (name === primary.name || chain.some((t) => t.name === name)) continue;
+    chain.push({ name, adapter });
   }
   return chain;
 }
