@@ -85,7 +85,7 @@ with a Retry action instead of surfacing only the raw provider snippet.
 ## Testing
 
 ```bash
-npm test             # 109 tests — canonical parity, SSE parsing, stats, components
+npm test             # 112 tests — canonical parity, SSE parsing, stats, components
 ```
 
 The suite is hermetic (no network, no real timers). Contract tests lock the exact

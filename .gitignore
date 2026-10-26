@@ -16,3 +16,6 @@ dist/
 
 # local dev server logs
 server*.log
+
+# DSH harness scratch directory
+.freebuff/

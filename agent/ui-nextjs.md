@@ -153,7 +153,7 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
 ## Verification (results)
 
 - `web/`: `npm run lint`, `npm run typecheck` (runs `next typegen` first so a clean
-  checkout typechecks), `npm run test` (109 passing across 15 files), `npm run build`
+  checkout typechecks), `npm run test` (112 passing across 15 files), `npm run build`
   (every route prerendered, incl. the new `/settings`) — green on the delivered tree.
 - Lighthouse (harness browser): accessibility 100 · best-practices 100 · SEO 100 on `/` in both
   themes; the same bar passed on `/playground` in light before the usage panel landed.

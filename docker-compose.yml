@@ -1,0 +1,112 @@
+# Relay — one-command local stack: gateway + control plane + Redis.
+#
+#   docker compose up --build
+#   gateway  -> http://localhost:3000   (POST /v1/chat/completions, /metrics, …)
+#   web UI   -> http://localhost:3001   (same-origin proxy to the gateway)
+#
+# No .env is required: the stack starts on the mock provider (zero keys). Put the
+# usual variables in a local .env to route to a real provider, for example:
+#   PROVIDER=openrouter
+#   OPEN_ROUTER_KEY=sk-or-v1-…
+#   OPENROUTER_MODEL=cohere/north-mini-code:free
+#   GATEWAY_API_KEYS=dev:openrouter:dev:lg_dev_only_key
+# See .env.example for every variable. The gateway image bakes the local ONNX
+# embedder, so semantic caching works offline (no embedding service needed).
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: relay-gateway:local
+    environment:
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      PROVIDER: ${PROVIDER:-mock}
+      UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-25000}
+      # Provider keys (only the ones you route to are needed).
+      OPEN_ROUTER_KEY: ${OPEN_ROUTER_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-cohere/north-mini-code:free}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      # Caching.
+      CACHE_ENABLED: "true"
+      CACHE_TTL_S: ${CACHE_TTL_S:-3600}
+      REDIS_URL: "redis://redis:6379"
+      SEMANTIC_ENABLED: "true"
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      SEMANTIC_THRESHOLD: ${SEMANTIC_THRESHOLD:-0.83}
+      SEMANTIC_TOP_K: ${SEMANTIC_TOP_K:-3}
+      SEMANTIC_TTL_S: ${SEMANTIC_TTL_S:-3600}
+      SEMANTIC_STORE: memory
+      # Optional: PostgreSQL + encryption key for persisted keys/credentials and
+      # pgvector semantic rows (set DATABASE_URL/CRED_ENC_KEY in .env to enable).
+      DATABASE_URL: ${DATABASE_URL:-}
+      CRED_ENC_KEY: ${CRED_ENC_KEY:-}
+      GATEWAY_API_KEYS: ${GATEWAY_API_KEYS:-}
+      SAVED_USD_PER_1K_TOKENS: ${SAVED_USD_PER_1K_TOKENS:-0}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "3000:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        # Baked into the Next.js image (routes-manifest) — must be reachable from
+        # the web container; inside the compose network the gateway hostname is
+        # "gateway" on the container port 3000.
+        GATEWAY_URL: "http://gateway:3000"
+    image: relay-web:local
+    environment:
+      PORT: "3001"
+      HOSTNAME: "0.0.0.0"
+      GATEWAY_URL: "http://gateway:3000"
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3001:3001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped

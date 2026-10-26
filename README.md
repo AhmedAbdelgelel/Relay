@@ -1,8 +1,17 @@
 # Relay — LLM Gateway with Semantic Caching
 
+[![CI](https://github.com/AhmedAbdelgelel/Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/AhmedAbdelgelel/Relay/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Tests: 308 core + 112 UI](https://img.shields.io/badge/tests-308%20core%20%2B%20112%20UI-brightgreen)](tests/)
+[![Runtime: Node 24](https://img.shields.io/badge/runtime-Node%2024-339933)](Dockerfile)
+
 An OpenAI-compatible gateway that sits between your app and LLM providers (OpenAI, Anthropic, Gemini, Ollama, OpenRouter) and **cuts cost and latency by serving repeated or rephrased questions from cache — without ever returning a wrong answer.**
 
 The problem it solves: every repeated or paraphrased prompt sent to an LLM costs money and time. Naive caching is risky, because *similar* doesn't mean *equivalent*. Relay reuses an answer only when it can prove reuse is safe — and every reply carries headers showing exactly why it was a hit or a miss.
+
+![Relay playground showing an exact HIT and a SEMANTIC_HIT with similarity evidence](docs/assets/relay-cache-evidence.png)
+
+*The Next.js control plane in simple mode: a MISS, an exact `HIT`, and a `SEMANTIC_HIT` with the measured similarity — visible for every reply, no log digging required.*
 
 ## How it works
 
@@ -19,6 +28,32 @@ client request
 ```
 
 Two safety nets keep caching honest: up to 50 identical requests arriving at once trigger only **one** provider call (single-flight), and a pure policy function re-checks provider, model, temperature, tenant identity, system-prompt fingerprint, policy version, and the similarity threshold before any paraphrased answer is reused.
+
+## At a glance
+
+| | |
+|---|---|
+| **Cache layers** | L1 exact (canonical SHA-256, memory/Redis) · L2 semantic (768-d embeddings, memory/pgvector) |
+| **Reuse safety** | pure policy gate re-checks tenant · provider · model · temperature · max_tokens · system fingerprint · policy version · threshold |
+| **Providers** | OpenAI, Anthropic, Gemini, Ollama, OpenRouter (one adapter interface; model-prefix routing) |
+| **Streaming** | SSE with first-token latency, client-abort propagation, terminal usage frame, `[DONE]` |
+| **Reliability** | bounded retries + jittered backoff, per-target circuit breaker, single-flight stampede protection, cache outage ⇒ `MISS` not 5xx |
+| **Observability** | evidence headers on every reply (`x-cache`, `x-cache-hash`, `x-semantic-similarity`, `x-lane`, …), `/metrics`, `/health`, `/providers`, per-tenant `/v1/usage` |
+| **Control plane** | Next.js 16 + React 19 UI: playground, live cache evidence, request inspector, cache control room, provider connections |
+| **Verification** | 308 core tests (23 files + 4 opt-in live) · 112 UI tests · `tsc` strict · Docker + GitHub Actions CI |
+| **Deploy** | Docker images for both apps (root `Dockerfile` for the gateway, `web/Dockerfile` for the UI) + one-command `docker compose up --build` |
+
+## If you're reviewing this project
+
+The five files that carry the interesting decisions:
+
+1. [`src/api/routes/chat.ts`](src/api/routes/chat.ts) — the serving pipeline: lanes → validation → routing → L1 → L2 → single-flight → fallback → evidence headers.
+2. [`src/policy/reuse.ts`](src/policy/reuse.ts) — the pure reuse-safety function (`similarity ≠ equivalence`).
+3. [`src/cache/`](src/cache/) — exact cache, vector stores, single-flight, Redis/pgvector adapters.
+4. [`evaluation/report.md`](evaluation/report.md) — the data-backed semantic-threshold sweep (FP/FN + cost tradeoff).
+5. [`web/src/app/playground/page.tsx`](web/src/app/playground/page.tsx) — the control plane's streaming, evidence rendering and cache-verdict UX.
+
+Security model and hardening checklist: [`SECURITY.md`](SECURITY.md).
 
 ## Architecture
 
@@ -101,7 +136,7 @@ curl -s -X POST localhost:3000/v1/chat/completions \
 
 ### Run with Docker
 
-The image builds reproducibly (Node 24 Debian slim, non-root, `HEALTHCHECK` on `/health`), with the default embedding model baked in — set `EMBEDDING_PROVIDER=local` and semantic caching works fully offline with zero downloads. CI builds + boots it on every push and publishes it on every main push, so you can pull instead of building:
+Everything ships as Docker images. The gateway image builds reproducibly (Node 24 Debian slim, non-root, `HEALTHCHECK` on `/health`), with the default embedding model baked in — set `EMBEDDING_PROVIDER=local` and semantic caching works fully offline with zero downloads. CI builds + boots it on every push and publishes it on every main push, so you can pull instead of building:
 
 ```bash
 docker pull ghcr.io/ahmedabdelgelel/relay:latest
@@ -112,7 +147,23 @@ docker build -t relay .
 docker run --rm -p 3000:3000 relay
 ```
 
-Configuration works the same as above: pass `-e KEY=VALUE` flags or `--env-file .env` (`.env.example` documents every variable; `PORT` is honored).
+The control plane has its own image (the Next.js proxy target is baked in at build time):
+
+```bash
+docker build -t relay-web --build-arg GATEWAY_URL=http://host.docker.internal:3000 web/
+docker run --rm -p 3001:3001 \
+  -e GATEWAY_URL=http://host.docker.internal:3000 relay-web
+```
+
+**One command for the whole stack.** [`docker-compose.yml`](docker-compose.yml) builds and wires the gateway, control plane and Redis (gateway `:3000`, UI `:3001`):
+
+```bash
+docker compose up --build
+# gateway  -> http://localhost:3000
+# web UI   -> http://localhost:3001 (same-origin proxy to the gateway)
+```
+
+Configuration works the same as above: `docker compose` reads a local `.env` for `PROVIDER`, `OPEN_ROUTER_KEY`, `GATEWAY_API_KEYS`, `SEMANTIC_THRESHOLD`, … (`.env.example` documents every variable; `PORT` is honored). With no `.env` at all the stack starts on the mock provider, so `docker compose up --build` is a zero-key smoke test.
 
 | Endpoint | Method | Notes |
 |---|---|---|
@@ -153,21 +204,44 @@ Two UIs ship in this repo — one zero-build console, one full app:
 
 Both speak the same gateway contract. A registered `lg_…` key unlocks caching and accounting; the anonymous try-out lane (`x-provider-key`) needs no signup but always bypasses the cache — the UI sends it automatically when no key is configured, so a fresh checkout can send a first request immediately. The Next.js playground is **minimal by default**: the chat plus one compact cache verdict/hint line per reply (the only caching info a simple user needs). Settings → Advanced restores the full evidence card, request trace, session counters and metrics; `/cache` is the dedicated caching control room.
 
+## Security
+
+Relay is explicitly designed for two-lane access: registered `lg_…` keys get caching + accounting; anonymous try-out callers only ever use their own upstream key and never read or write cache. The full threat model, key handling (SHA-256 hashed gateway keys, AES-256-GCM encrypted provider credentials), cache tenant boundaries, known limitations (open registration, no rate limits, BYO base-URL SSRF surface, exact-cache cross-tenant sharing by design) and a deployment hardening checklist live in [`SECURITY.md`](SECURITY.md).
+
 ## Test report
 
-Full suite green at the last verified run (2026-10-26): **23 files passed, 4 skipped (27 total)** — **308 tests passed, 11 skipped, 0 failed (319 total)** — plus a clean root `tsc` typecheck, and the Next.js control plane's own `lint` + `typecheck` + **102 tests** + production `build`. The default sweep is an HTTP-level end-to-end suite that drives the real Fastify app via `app.inject()` and real sockets, with upstreams replaced by local fakes, plus focused keepers that guard what an HTTP test cannot reach: type contracts, the reuse-policy matrix, normalizer rules, SQL/Redis command builders, the ONNX embedder, the key/credential lifecycle, and the jsdom UI suites. The four skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`; 3/3 passed live during this verification run), the built-in embedder against the real ONNX model via `EMBEDDING_LIVE_TEST=1`, real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
+Full suite green at the last verified run (2026-10-26): **23 files passed, 4 skipped (27 total)** — **308 tests passed, 11 skipped, 0 failed (319 total)** — plus a clean root `tsc` typecheck, and the Next.js control plane's own `lint` + `typecheck` + **112 tests (15 files)** + production `build`. The default sweep is an HTTP-level end-to-end suite that drives the real Fastify app via `app.inject()` and real sockets, with upstreams replaced by local fakes, plus focused keepers that guard what an HTTP test cannot reach: type contracts, the reuse-policy matrix, normalizer rules, SQL/Redis command builders, the ONNX embedder, the key/credential lifecycle, and the jsdom UI suites. The four skipped files are the opt-in live tests: real OpenRouter free-tier models via `npm run test:live` (needs a free `OPEN_ROUTER_KEY`; 3/3 passed live during this verification run), the built-in embedder against the real ONNX model via `EMBEDDING_LIVE_TEST=1`, real Gemini via `GEMINI_LIVE_TEST=1`, and real Redis via `REDIS_LIVE_TEST=1`. No test in the default sweep calls an external provider or needs a credential, so it stays hermetic, offline and free; CI runs the same gate on every push. Run it yourself with `npm test` / `npm run typecheck`; regenerate the semantic-threshold report with `npm run eval`.
 
-Measured performance (mock provider with 50 ms simulated latency):
+Measured performance — **reproduced on 2026-10-26** with `npm run bench` (Node 22, Windows 11, shared 8-vCPU box, mock provider with 50 ms simulated latency, real in-process ONNX embedder, semantic threshold 0.80, no external calls):
 
 | Measurement | Result |
 |---|---|
-| Cached reply (HIT, n=20) | avg 0.6 ms, p95 2 ms |
-| Provider reply (MISS, n=5) | avg 64.6 ms, median 61 ms |
-| Provider calls avoided in that run | 20 of 25 requests |
-| 50 concurrent identical misses | 1 provider call, all 50 served |
-| Paraphrase of a cached answer | `SEMANTIC_HIT` + similarity header, no provider call |
-| Unrelated / temperature-changed / other-tenant prompt | `MISS` (no false reuse) |
-| Embedder or cache outage | request still succeeds as `MISS`, never a 5xx |
+| Exact-cache HIT, gateway-observed `x-latency-ms` (n=20) | **avg 0.25–0.30 ms, p95 1 ms** |
+| Exact-cache HIT, client loopback RTT (n=20) | avg 2.7–7.7 ms, p95 4.2–14.3 ms (Windows loopback/fetch scheduling jitter) |
+| Provider MISS, client RTT (n=5) | avg 71.4–76.8 ms, median 68.8–77.6 ms (50 ms mock + real embed/overhead) |
+| Provider calls avoided in that run | **20 of 25 (80%)** |
+| 50 concurrent identical cold asks | **1 provider call**, 49 coalesced, all 200, same answer |
+| Paraphrase of a cached answer | `SEMANTIC_HIT`, similarity **0.9103**, 0 provider calls |
+| Unrelated / temperature-changed / other-tenant prompt | `MISS` (no false reuse; unrelated cosine 0.1827) |
+| Cache outage (throwing store on read/write) | HTTP 200 `MISS`, `cache_lookup_failed`/`cache_write_failed` counted, **no 5xx** |
+| 64 KB payload | MISS 0.51–0.89 s (embedder-bound) → HIT 6–20 ms, identical `x-cache-hash` and bytes |
+| 6 KB × 40 exact replay | 1 provider call for the seed, 40/40 HITs (avg 9.5–11.6 ms per replay) |
+| ONNX embedder warmup | 1.0–1.2 s warm OS cache / 5.6 s cold |
+
+How to read these: the mock provider makes this a **lower bound, not a live-provider benchmark**; MISS and large-payload requests include real in-process ONNX inference (~30 ms warm for short prompts, ~0.6 s for multi-KB prompts on this machine), which is why the old table's 64.6 ms MISS / 0.6 ms HIT numbers are replaced — those predated the built-in embedder being on the miss path. HIT latency is reported both gateway-side and client loopback (the client number includes OS/fetch scheduling jitter). The reproduced run passed **44/44 hard assertions** (false verdict, wrong provider-call count, 5xx or hash drift would exit non-zero), and `/metrics` confirmed the accounting for every phase. Machine: Node 22, Windows 11, Intel i7-9700 (8 vCPU), 8 GB RAM, shared box.
+
+### Reproduce the numbers
+
+```bash
+npm install
+npm run bench                      # hermetic: mock provider, local embedder, prints table + BENCH_JSON
+npm run eval                       # deterministic threshold sweep → evaluation/report.md
+npm test                           # 308 passed, 11 skipped (4 opt-in live files)
+npm run typecheck
+cd web && npm install && npm test  # 112 UI tests; npm run build for production
+```
+
+The benchmark harness lives in [`scripts/bench/cache.ts`](scripts/bench/cache.ts) and uses the real Fastify app on an ephemeral loopback port (no vitest, no network). Numbers vary by a few ms run-to-run on a shared Windows box; the full run JSON is printed on every invocation.
 
 <details>
 <summary>Per-file breakdown (click to expand, counts from the 2026-10-26 run)</summary>
@@ -216,6 +290,14 @@ What is deliberately not built yet is tracked in the repo docs, not hidden here 
 - **Fallback scope** — the ordered fallback chain acts on provider-agnostic model ids only. A provider-specific id (`gpt-*`, `claude-*`, `gemini-*`, `llama*`, `openrouter/*`, `*:free`) retries inside its own provider and never fails over to another vendor, because a foreign model id would 404 and mask the real upstream error (live-proven: an OpenRouter 429 surfaced as a misleading Gemini 404).
 - **pgvector expiry** — rows expire logically (`expires_at` filter) and are never served after TTL, but no purge job deletes them yet; long-lived pgvector deployments should schedule their own `DELETE FROM semantic_cache WHERE expires_at < now()` until that lands.
 
+## Roadmap (what I would do next if productizing)
+
+- Per-tenant rate limits/quotas and an admin API (API Management / edge currently required).
+- Prometheus/OpenTelemetry export + distributed tracing; latency histograms beyond the JSON snapshot.
+- Multi-replica safe single-flight and circuit breaker (Redis-based lease/lock) instead of process-local state.
+- Scheduled pgvector retention/purge job and a CI leg with PostgreSQL + pgvector (today the SQL/DDL is contract-tested and was manually validated against PostgreSQL 13).
+- Hosted public demo (mock provider or a capped demo key) with a short screen capture, for reviewers who don't want to clone.
+
 ## Layout
 
 ```
@@ -232,12 +314,16 @@ src/
   server.ts        composition root (wiring lives only here)
 db/migrations/     reference SQL mirroring the runtime DDL embedded in src/ (boot applies the embedded DDL)
 scripts/eval/      deterministic threshold-sweep harness (`npm run eval`)
+scripts/bench/     hermetic cache benchmark (`npm run bench`) — reproduces the performance table
 evaluation/        generated semantic-threshold report (the eval gate)
+docs/              README assets (screenshots)
+docker-compose.yml gateway + control plane + Redis, one command
 tests/e2e/         HTTP-level end-to-end suite (inject + real sockets, fake upstreams)
 tests/             focused keepers (types, UI, policy, infra contracts)
 agent/             product spec, architecture notes, and review checklists
 public/            original zero-build control plane (served by the gateway)
 web/               Next.js control-plane UI (see web/README.md)
+SECURITY.md        threat model, key handling, known limitations, hardening checklist
 ```
 
 ## Long-context & high-cardinality cache (measured)
@@ -245,15 +331,17 @@ web/               Next.js control-plane UI (see web/README.md)
 Two batteries prove the caching layers hold up at content sizes and
 cardinalities the fixture tests never touch:
 
-1. **In-suite (hermetic, runs on every commit)** — `tests/e2e/long-context-cache.e2e.test.ts`, 4 tests:
+1. **In-suite (hermetic, reproduced on every run)** — `tests/e2e/long-context-cache.e2e.test.ts`, 4 tests:
    6KB×40 exact pass with reconciled accounting; LRU cap-20 eviction absorbed
    by the semantic layer (0 extra provider calls); semantic cap-30 row
    eviction (victim paraphrase → MISS → re-saved → next paraphrase HIT);
    64KB canonical-hash stability (MISS→HIT, byte-identical).
-2. **Live battery below** — real HTTP against the production build
+2. **Live battery (historical)** — real HTTP against a production build
    (`node dist/server.js`), cache=memory, semantic=memory-vector,
    embedder=local (built-in ONNX), threshold 0.80, default caps
-   (L1 1000 / L2 2000, TTL 3600s), Node 24.
+   (L1 1000 / L2 2000, TTL 3600s), Node 24. Measured 2026-10-17; not re-run in
+   the 2026-10-26 verification sweep (the hermetic `npm run bench` covers the
+   core latencies on this machine instead).
 
 | Leg | Load | Numbers |
 |---|---|---|

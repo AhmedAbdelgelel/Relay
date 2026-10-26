@@ -1,0 +1,43 @@
+# Build-context exclusions for web/Dockerfile.
+# These rules apply ONLY when the Docker build context is the web/ directory:
+#   docker build -t relay-web web/
+#   (docker compose up --build does this for you; see docker-compose.yml)
+
+# Dependencies and build output (installed/built inside the image).
+node_modules
+.next
+out
+build
+coverage
+*.tsbuildinfo
+
+# Never bake local env files into the image. GATEWAY_URL is a build ARG instead.
+.env
+.env.*
+!.env.example
+
+# Logs, OS noise, VCS, editor/CI metadata.
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.DS_Store
+.git
+.gitignore
+.github
+.vercel
+
+# Docs are not needed at runtime.
+README.md
+AGENTS.md
+
+# Tests are NOT needed for a production image, and one of them imports the
+# gateway's repo-root src/ (src/lib/canonical.test.ts ->
+# ../../../src/domain/normalize), which is outside this build context.
+# `next build` runs a TypeScript check over the project, so leaving that file in
+# the context would fail with "Cannot find module '../../../src/domain/normalize'".
+# Excluding tests keeps the web image buildable from the web/ context alone.
+src/**/*.test.ts
+src/**/*.test.tsx
+src/test
+vitest.config.ts
