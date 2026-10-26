@@ -1197,7 +1197,8 @@ model prefix a client may send):
 - `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`), `OPENAI_BASE_URL`
 - `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-4`), `ANTHROPIC_BASE_URL`
 - `OPEN_ROUTER_KEY`, `OPENROUTER_MODEL`
-  (default `nvidia/nemotron-3-super-120b-a12b:free`), `OPENROUTER_BASE_URL`
+  (default `cohere/north-mini-code:free` — verified against the live $0 tier
+  on 2026-10-26; free ids churn, override freely), `OPENROUTER_BASE_URL`
   (default `https://openrouter.ai/api/v1`). `:free` models are $0 but still need a free
   OpenRouter account key; models ending `:free` or prefixed `openrouter/` route to
   openrouter automatically. A keyless gateway still boots and can serve BYO tenant

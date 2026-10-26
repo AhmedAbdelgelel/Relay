@@ -19,8 +19,9 @@ import { laneAuth } from "../helpers/lane.js";
 const LIVE = process.env.OPENROUTER_LIVE_TEST === "1";
 const HAS_KEY = !!process.env.OPEN_ROUTER_KEY;
 // A small free instruct model keeps the smoke fast and compliant; override
-// with OPENROUTER_MODEL for a bigger :free model.
-const MODEL = process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
+// with OPENROUTER_MODEL for a bigger :free model. Free ids churn: this one was
+// verified against the live $0 tier (2026-10-26).
+const MODEL = process.env.OPENROUTER_MODEL || "cohere/north-mini-code:free";
 const BASE_URL = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 const LIVE_TIMEOUT_MS = 60000;
 

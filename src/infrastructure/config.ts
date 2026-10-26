@@ -153,7 +153,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     anthropicModel: str(env, "ANTHROPIC_MODEL", "claude-4"),
     openRouterKey: str(env, "OPEN_ROUTER_KEY"),
     openRouterBaseUrl: str(env, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-    openRouterModel: str(env, "OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),
+    openRouterModel: str(env, "OPENROUTER_MODEL", "cohere/north-mini-code:free"),
     redisUrl: str(env, "REDIS_URL"),
     cacheTtlSec: num(env, "CACHE_TTL_S", 3600),
     cacheEnabled: bool(env, "CACHE_ENABLED", true),
