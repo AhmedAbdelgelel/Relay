@@ -6,7 +6,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Thread } from "@/components/playground/Thread";
-import { SUGGESTIONS } from "@/components/playground/catalog";
+import { cacheHint, SUGGESTIONS } from "@/components/playground/catalog";
 import type { ChatRecord, MessageMeta } from "@/lib/types";
 
 function assistantMeta(): MessageMeta {
@@ -83,8 +83,8 @@ describe("Thread message rows", () => {
     expect(screen.getByText("Hello there")).toBeVisible();
     expect(screen.getByText("General Kenobi!")).toBeVisible();
     // The who-line appears once visibly; the hidden metrics card repeats the
-    // provider · model pair in its Provider row.
-    const who = screen.getAllByText("mock · gpt-5");
+    // raw provider · model pair in its Provider row.
+    const who = screen.getAllByText("Mock · gpt-5");
     expect(who.length).toBeGreaterThan(0);
     expect(who[0]).toBeVisible();
   });
@@ -134,9 +134,13 @@ describe("Thread message rows", () => {
     expect(screen.getByText(/key key-6027c011 · coalesced false/)).toBeVisible();
   });
 
-  it("hides metrics and evidence when Advanced is off", () => {
+  it("shows the compact cache verdict but not the metrics card when Advanced is off", () => {
     renderThread(FILLED_CHAT, vi.fn(), false);
 
+    // Simple mode keeps the one caching surface a caching-focused user needs…
+    expect(screen.getByText("HIT")).toBeVisible();
+    expect(screen.getByText(cacheHint("HIT"))).toBeVisible();
+    // …while the metrics line, evidence card and expanded card stay behind Advanced.
     expect(screen.queryByRole("button", { name: /cache HIT/ })).toBeNull();
     expect(screen.getByText("General Kenobi!")).toBeVisible();
   });

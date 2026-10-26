@@ -3,10 +3,11 @@
 /**
  * Settings — the home for the connection and the Advanced section.
  *
- * Advanced gates every technical surface: with it off the playground shows a
- * clean chat (no metrics lines, evidence cards, trace or session counters).
- * The last captured exchange and the gateway's cache configuration live here
- * so the chat surface stays simple, and the deep inspector routes are linked.
+ * Advanced gates the deep technical surfaces: with it off the playground shows
+ * the chat plus the compact cache verdict/hint (no metrics lines, evidence
+ * cards, trace or session counters). The last captured exchange and the
+ * gateway's cache configuration live here so the chat surface stays simple,
+ * and the deep inspector routes are linked.
  */
 
 import Link from "next/link";
@@ -107,8 +108,9 @@ export function SettingsView() {
                 Show technical details
               </p>
               <p className="mt-0.5 text-[11px] leading-4 text-ink-3">
-                In the playground: per-reply metrics, the cache-evidence card, the request trace
-                and the session counters. Off, the playground is just the chat.
+                In the playground: per-reply metrics, the full cache-evidence card, the request
+                trace and the session counters. Off, the playground keeps the chat plus the
+                compact cache verdict and hint.
               </p>
             </div>
             <Switch

@@ -43,7 +43,7 @@ export function SessionPanel({ stats }: { stats: SessionStats }) {
 
   const summary =
     stats.requests > 0
-      ? `${stats.estimated ? "≈ " : ""}${stats.requests} requests (${stats.bypassed} streamed) · ${rate} HIT · ${formatCount(totalTokens)} tokens${
+      ? `${stats.estimated ? "≈ " : ""}${stats.requests} requests (${stats.bypassed} bypassed) · ${rate} HIT · ${formatCount(totalTokens)} tokens${
           stats.errors ? ` · ${stats.errors} error${stats.errors > 1 ? "s" : ""}` : ""
         }`
       : "No requests yet";

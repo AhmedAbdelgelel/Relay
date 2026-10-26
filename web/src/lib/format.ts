@@ -15,14 +15,21 @@ export const COST_PER_1M: Record<string, { in: number; out: number }> = {
   "claude-3.7-haiku": { in: 0.25, out: 1.25 },
 };
 
-const DEFAULT_PRICE = { in: 0.5, out: 1.5 };
+/** The `:free` tier is billed $0 — never price it from the table. */
+const FREE_PRICE = { in: 0, out: 0 };
 
+/**
+ * Client-side cost estimate in USD, or null when the price is unknown.
+ * Unknown models must read as "—" instead of a fabricated default price;
+ * `:free` model ids are honest zeroes.
+ */
 export function estimateCost(
   model: string,
   tokens: { prompt?: number; completion?: number } | null | undefined,
-): number {
+): number | null {
   if (!tokens) return 0;
-  const rate = COST_PER_1M[model] ?? DEFAULT_PRICE;
+  const rate = model.endsWith(":free") ? FREE_PRICE : COST_PER_1M[model];
+  if (!rate) return null;
   return ((tokens.prompt ?? 0) / 1e6) * rate.in + ((tokens.completion ?? 0) / 1e6) * rate.out;
 }
 

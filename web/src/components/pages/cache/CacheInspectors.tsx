@@ -34,9 +34,12 @@ export function CacheInspectors({ health }: { health: HealthInfo | null }) {
       hard_filter: ["tenant", "provider", "model"],
       policy_rejections: [
         "provider-mismatch",
+        "tenant-mismatch",
         "model-mismatch",
         "temperature-mismatch",
         "max-tokens-mismatch",
+        "system-fingerprint-mismatch",
+        "policy-version-mismatch",
         "below-threshold",
         "empty-content",
       ],

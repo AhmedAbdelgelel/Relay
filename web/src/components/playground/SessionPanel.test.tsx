@@ -38,7 +38,7 @@ describe("SessionPanel", () => {
 
     render(<SessionPanel stats={stats} />);
 
-    expect(screen.getByText(/4 requests \(0 streamed\) · 50% HIT/)).toBeVisible();
+    expect(screen.getByText(/4 requests \(0 bypassed\) · 50% HIT/)).toBeVisible();
     expect(cellValue("hit rate")).toBe("50%");
     expect(cellValue("stream chunks")).toBe("7");
     expect(cellValue("avg TTFT")).toBe("100ms");
@@ -67,6 +67,6 @@ describe("SessionPanel", () => {
     render(<SessionPanel stats={noDecisions} />);
 
     expect(cellValue("hit rate")).toBe("—");
-    expect(screen.getByText(/2 requests \(2 streamed\) · — HIT/)).toBeVisible();
+    expect(screen.getByText(/2 requests \(2 bypassed\) · — HIT/)).toBeVisible();
   });
 });

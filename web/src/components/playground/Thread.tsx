@@ -11,10 +11,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { ChatMessage, ChatRecord, Evidence } from "@/lib/types";
-import { Button } from "@/components/ui";
+import type { ChatMessage, ChatRecord, Evidence, MessageMeta } from "@/lib/types";
+import { Badge, Button, verdictTone } from "@/components/ui";
 import { estimateTokens, timeShort } from "@/lib/format";
-import { providerDisplayLabel, SUGGESTIONS } from "./catalog";
+import { cacheHint, providerDisplayLabel, SUGGESTIONS } from "./catalog";
 import { copyText } from "./clipboard";
 import { MetricsCard, MetricsLine } from "./Metrics";
 
@@ -38,7 +38,7 @@ interface ThreadProps {
   pending: PendingState | null;
   regenerateId: string | null;
   retryId: string | null;
-  /** Settings → Advanced: per-reply metrics line + cache-evidence card. */
+  /** Settings → Advanced: full metrics line + evidence card; off: compact verdict only. */
   detailed: boolean;
   onRegenerate: () => void;
   onRetry: () => void;
@@ -53,6 +53,30 @@ function whoLine(provider: string | null, model: string | null, fallback: string
 
 function WhoLine({ children }: { children: ReactNode }) {
   return <div className="text-[11px] text-ink-3">{children}</div>;
+}
+
+/**
+ * Simple mode (Advanced off): the one cache surface a caching-focused user
+ * needs — the verdict badge plus the plain-language hint (anonymous-lane
+ * BYPASS and semantic similarity included). The full technical card stays
+ * behind Settings → Advanced.
+ */
+function CacheVerdictLine({
+  meta,
+  evidence,
+}: {
+  meta: MessageMeta;
+  evidence: Evidence | undefined;
+}) {
+  if (!meta.verdict) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <Badge tone={verdictTone(meta.verdict)}>{meta.verdict}</Badge>
+      <span className="min-w-0 text-[11px] leading-4 text-ink-3">
+        {cacheHint(meta.verdict, evidence?.semanticSimilarity, evidence?.lane)}
+      </span>
+    </div>
+  );
 }
 
 function CopyToolButton({ text }: { text: string }) {
@@ -154,16 +178,20 @@ function AssistantRow({
           {estimateTokens(message.text).toLocaleString("en-US")} tok
         </div>
       ) : null}
-      {!isLive && meta && detailed ? (
-        <>
-          <MetricsLine
-            meta={meta}
-            open={open}
-            cardId={cardId}
-            onToggle={() => setOpen((prev) => !prev)}
-          />
-          <MetricsCard meta={meta} evidence={evidence} id={cardId} open={open} />
-        </>
+      {!isLive && meta ? (
+        detailed ? (
+          <>
+            <MetricsLine
+              meta={meta}
+              open={open}
+              cardId={cardId}
+              onToggle={() => setOpen((prev) => !prev)}
+            />
+            <MetricsCard meta={meta} evidence={evidence} id={cardId} open={open} />
+          </>
+        ) : (
+          <CacheVerdictLine meta={meta} evidence={evidence} />
+        )
       ) : null}
       {!isLive ? (
         <div className="mt-1 flex items-center gap-1">
@@ -200,16 +228,20 @@ function NoticeRow({
         {meta ? whoLine(meta.provider, meta.model, fallbackLabel) : fallbackLabel}
       </WhoLine>
       <div className="mt-0.5 text-[13px] leading-5 text-warn">{message.text}</div>
-      {meta && detailed ? (
-        <>
-          <MetricsLine
-            meta={meta}
-            open={open}
-            cardId={cardId}
-            onToggle={() => setOpen((prev) => !prev)}
-          />
-          <MetricsCard meta={meta} evidence={evidence} id={cardId} open={open} />
-        </>
+      {meta ? (
+        detailed ? (
+          <>
+            <MetricsLine
+              meta={meta}
+              open={open}
+              cardId={cardId}
+              onToggle={() => setOpen((prev) => !prev)}
+            />
+            <MetricsCard meta={meta} evidence={evidence} id={cardId} open={open} />
+          </>
+        ) : (
+          <CacheVerdictLine meta={meta} evidence={evidence} />
+        )
       ) : null}
       <div className="mt-1 flex items-center gap-1">
         <CopyToolButton text={message.text} />

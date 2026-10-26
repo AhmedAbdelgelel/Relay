@@ -35,6 +35,7 @@ import type {
 } from "@/lib/types";
 import {
   catalogProviderId,
+  DEFAULTS,
   providerDisplayLabel,
   providerForModel,
   providerPillLabel,
@@ -162,6 +163,7 @@ function resolvePayload(message: ChatMessage | null, lastRun: RunState | null): 
 export default function PlaygroundPage(): ReactNode {
   const {
     connection,
+    hydrated,
     advanced,
     health,
     activeChat,
@@ -243,6 +245,36 @@ export default function PlaygroundPage(): ReactNode {
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [activeChatId, messages.length, lastMessageText, liveChunks, pendingRow]);
+
+  // Fresh-checkout default: the bundled draft model is the sentinel (`mock`,
+  // the gateway's zero-setup provider). While the user has not picked a model
+  // yet, adopt the active provider's first model from GET /providers so a
+  // gateway configured with a real default (gemini/openai/…) is ready to send.
+  // A mock gateway reports model "mock" and this is a no-op. Client-only
+  // (SSR-safe); offline or proxy failures silently keep the sentinel.
+  useEffect(() => {
+    if (!hydrated) return; // wait for the persisted connection, never adopt from a stale one
+    let cancelled = false;
+    new GatewayClient(connection)
+      .providers()
+      .then((providers) => {
+        if (cancelled) return;
+        const active =
+          providers.find((provider) => provider.active) ??
+          providers.find((provider) => provider.configured);
+        const model = active?.models[0];
+        if (!model || model === DEFAULTS.model || getDraft().model !== DEFAULTS.model) return;
+        setForm((prev) => (prev.model === DEFAULTS.model ? { ...prev, model } : prev));
+        const current = getDraft();
+        if (current.model === DEFAULTS.model) setDraft({ ...current, model });
+      })
+      .catch(() => {
+        /* offline or proxy down: keep the bundled sentinel model */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connection, hydrated]);
 
   /* actions */
 

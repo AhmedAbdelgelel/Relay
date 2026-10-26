@@ -60,15 +60,17 @@ src/lib/
 src/test/           vitest setup + fetch/SSE stub helpers
 ```
 
-Honesty invariants carried over from the gateway: cache evidence
-(`x-cache`, `x-cache-hash`, lanes, similarity) is always shown, estimated tokens are
-marked `≈`, and the browser re-computes the canonical sha256 to verify what the
-gateway reports.
+Honesty invariants carried over from the gateway: every completed reply shows its
+cache verdict plus the plain-language hint (anonymous-lane BYPASS and semantic
+similarity included). The full evidence (`x-cache`, `x-cache-hash`, lane/key id,
+coalescing, fallback, canonical JSON), the request trace and the session counters
+live behind Settings → Advanced. Estimated tokens are marked `≈`, and the browser
+re-computes the canonical sha256 to verify what the gateway reports.
 
 ## Testing
 
 ```bash
-npm test             # 101 tests — canonical parity, SSE parsing, stats, components
+npm test             # 102 tests — canonical parity, SSE parsing, stats, components
 ```
 
 The suite is hermetic (no network, no real timers). Contract tests lock the exact

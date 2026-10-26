@@ -61,9 +61,21 @@ describe("cost table", () => {
     expect(estimateCost("gpt-5", { prompt: 1_000_000, completion: 1_000_000 })).toBeCloseTo(11.25);
   });
 
-  it("falls back to the default price for unknown models", () => {
-    expect(estimateCost("mystery-model", { prompt: 1_000_000, completion: 0 })).toBeCloseTo(0.5);
-    expect(estimateCost("mystery-model", { prompt: 1_000_000, completion: 1_000_000 })).toBeCloseTo(2.0);
+  it("returns null for unknown models instead of a fabricated default price", () => {
+    expect(estimateCost("mystery-model", { prompt: 1_000_000, completion: 0 })).toBeNull();
+    expect(estimateCost("mystery-model", { prompt: 1_000_000, completion: 1_000_000 })).toBeNull();
+  });
+
+  it("prices the :free tier as an honest zero", () => {
+    expect(
+      estimateCost("nvidia/nemotron-3-super-120b-a12b:free", {
+        prompt: 1_000_000,
+        completion: 1_000_000,
+      }),
+    ).toBe(0);
+    expect(formatCost(estimateCost("test-lab/live-only:free", { prompt: 123, completion: 456 }))).toBe(
+      "$0.00",
+    );
   });
 
   it("returns 0 for missing token usage", () => {

@@ -66,10 +66,24 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
     endpoint: "http://localhost:11434/v1",
     models: ["custom-model"],
   },
+  /** Zero-setup default (`PROVIDER=mock`): in-process, no keys, no network. */
+  mock: {
+    label: "Mock",
+    adapter: "In-process Mock Adapter",
+    endpoint: "in-process",
+    models: ["mock"],
+  },
 };
 
-/** `<select>` order from the legacy viewPlayground() markup (picker group order). */
-export const PROVIDER_ORDER = ["google", "openai", "anthropic", "openrouter", "custom"] as const;
+/** Legacy `<select>` order plus `mock`, the gateway's zero-setup default provider. */
+export const PROVIDER_ORDER = [
+  "mock",
+  "google",
+  "openai",
+  "anthropic",
+  "openrouter",
+  "custom",
+] as const;
 
 /** Free OpenRouter tier: `:free` suffixed ids route to OpenRouter and bill $0. */
 export function isFreeModel(model: string): boolean {
@@ -109,7 +123,10 @@ export function catalogProviderId(providerId: string | null | undefined): string
 }
 
 export const DEFAULTS = {
-  model: "gemini-3.6-flash",
+  // The gateway's zero-setup default (`PROVIDER=mock`): a fresh checkout must be
+  // able to send immediately. PlaygroundPage swaps in the active provider's first
+  // model from GET /providers for gateways configured with a real default.
+  model: "mock",
   stream: true,
 } as const;
 
@@ -143,6 +160,8 @@ export function providerPillLabel(provider: string): string {
       return "Anthropic · Claude";
     case "openrouter":
       return "OpenRouter";
+    case "mock":
+      return "Mock";
     case "custom":
       return "Custom";
     default:
