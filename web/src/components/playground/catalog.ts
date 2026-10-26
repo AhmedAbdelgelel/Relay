@@ -42,22 +42,15 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
     label: "OpenRouter",
     adapter: "OpenAI-compatible Adapter",
     endpoint: "https://openrouter.ai/api/v1",
+    // Curated `$0` tier. Free ids churn and each upstream rate-limits/retires
+    // independently of OpenRouter, so the bundled list only carries models
+    // verified against the live free tier on 2026-10-26. "Refresh" pulls the
+    // live public $0 list; the custom-id field accepts any model id.
     models: [
-      "nvidia/nemotron-3-super-120b-a12b:free",
-      "nvidia/nemotron-3-ultra-550b-a55b:free",
-      "nvidia/nemotron-3.5-lightning:free",
-      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-      "google/gemma-4-31b-it:free",
-      "google/gemma-4-26b-a4b-it:free",
-      "thinkingmachines/inkling:free",
-      "thinkingmachines/inkling-small:free",
-      "poolside/laguna-s-2.1:free",
-      "poolside/laguna-xs-2.1:free",
-      "liquid/lfm-2.5-2.6b:free",
       "cohere/north-mini-code:free",
       "xingchen-agi/xing4.0-29b-a4b:free",
-      "dots-studio/dots-3-note-preview:free",
-      "nvidia/nemotron-3.5-super-vl:free",
+      "liquid/lfm-2.5-2.6b:free",
+      "recursive/flint-v1.0:free",
     ],
   },
   custom: {
@@ -127,7 +120,10 @@ export const DEFAULTS = {
   // able to send immediately. PlaygroundPage swaps in the active provider's first
   // model from GET /providers for gateways configured with a real default.
   model: "mock",
-  stream: true,
+  // Streams bypass both cache layers by design (an SSE response cannot replay a
+  // stored blob), so the simple caching story starts with cacheable requests.
+  // Token streaming is one switch away when a user wants it.
+  stream: false,
 } as const;
 
 /** The 3 legacy suggestion chips (same texts, inventory §2.2). */
@@ -213,4 +209,20 @@ export function cacheHint(
     return `Paraphrase matched a stored question${s} — the answer was reused and the provider was NOT called.`;
   }
   return CACHE_HINT[verdict];
+}
+
+/**
+ * Actionable copy for a failed `$0` OpenRouter request. Free models churn and
+ * upstreams rate-limit or retire independently of OpenRouter: a `:free` id can
+ * answer 404 (`provider_not_found`) or 429 (`provider_rate_limited`) while the
+ * account and gateway are healthy. Point the user at verified free models
+ * instead of leaving a raw provider snippet as the only explanation.
+ */
+export function freeModelFailureHint(model: string, code: string | null | undefined): string | null {
+  if (!isFreeModel(model)) return null;
+  if (code !== "provider_not_found" && code !== "provider_rate_limited" && code !== "provider_error") {
+    return null;
+  }
+  const reason = code === "provider_rate_limited" ? "is temporarily rate-limited upstream" : "is unavailable upstream right now";
+  return `This $0 model ${reason}. Pick another $0 model — cohere/north-mini-code:free and xingchen-agi/xing4.0-29b-a4b:free are verified working here — or press Retry.`;
 }

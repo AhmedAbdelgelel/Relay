@@ -38,7 +38,7 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
     id: "openrouter",
     label: "OpenRouter",
     endpoint: "https://openrouter.ai/api/v1",
-    models: ["nvidia/nemotron-3-super-120b-a12b:free"],
+    models: ["cohere/north-mini-code:free"],
   },
   {
     id: "mock",

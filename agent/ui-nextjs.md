@@ -136,11 +136,20 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
     first `/providers` model when a real gateway default is configured. Also: honest `$0.00`
     cost for `:free` models (unknown models show "—" instead of a fabricated price),
     "bypassed" session wording, and all 9 reuse-policy rejection reasons in the cache page.
+16. Free-model demos that keep working — the bundled `$0` OpenRouter list is now curated to
+    ids verified against the live free tier (`cohere/north-mini-code:free` first; the retired
+    nvidia ids dropped), Refresh keeps curated ids first ahead of the live list, and the
+    playground defaults to **non-streaming** requests so the exact + semantic layers are
+    visible on the first send (streaming is one switch away and BYPASSes by design). A dead or
+    throttled free upstream gets a dedicated error card ("Free model unavailable … pick another
+    `$0` model") with a Retry action instead of a raw provider snippet. A `#apiKey=lg_…` URL
+    fragment can hand a working, already-connected demo link to any browser (fragment never
+    reaches the gateway).
 
 ## Verification (results)
 
 - `web/`: `npm run lint`, `npm run typecheck` (runs `next typegen` first so a clean
-  checkout typechecks), `npm run test` (102 passing across 14 files), `npm run build`
+  checkout typechecks), `npm run test` (109 passing across 15 files), `npm run build`
   (every route prerendered, incl. the new `/settings`) — green on the delivered tree.
 - Lighthouse (harness browser): accessibility 100 · best-practices 100 · SEO 100 on `/` in both
   themes; the same bar passed on `/playground` in light before the usage panel landed.

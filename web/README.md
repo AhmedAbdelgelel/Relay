@@ -73,10 +73,19 @@ coalescing, fallback, canonical JSON), the request trace and the session counter
 live behind Settings → Advanced. Estimated tokens are marked `≈`, and the browser
 re-computes the canonical sha256 to verify what the gateway reports.
 
+**Free-model demos.** The playground defaults to **non-streaming** requests: SSE
+streams bypass both cache layers by design, while a non-stream request gets the
+exact + semantic layers and shows the verdict badge/hint on every reply. The
+bundled `$0` OpenRouter list only carries ids verified against the live free tier
+(Free ids churn upstream; "Refresh" pulls the live public $0 list, curated ids
+stay first, and a custom id can always be typed). When a free model's upstream is
+retired or rate-limited, the error card says so and points at verified `$0` ids
+with a Retry action instead of surfacing only the raw provider snippet.
+
 ## Testing
 
 ```bash
-npm test             # 102 tests — canonical parity, SSE parsing, stats, components
+npm test             # 109 tests — canonical parity, SSE parsing, stats, components
 ```
 
 The suite is hermetic (no network, no real timers). Contract tests lock the exact

@@ -36,6 +36,7 @@ import type {
 import {
   catalogProviderId,
   DEFAULTS,
+  freeModelFailureHint,
   providerDisplayLabel,
   providerForModel,
   providerPillLabel,
@@ -681,12 +682,21 @@ export default function PlaygroundPage(): ReactNode {
         const evidence = error.evidence ?? emptyEvidence(sentId);
         const wait = formatWait(`${JSON.stringify(error.payload ?? {})} ${error.message}`);
         const quota = error.status === 429;
-        const title = quota ? "Quota exhausted · 429" : `Request failed · ${error.status}`;
-        const body = quota
-          ? `Quota exhausted for ${payload.model}.${
-              wait ? ` Retry window ~${wait} from now.` : ""
-            } Your prompt is saved — hit Retry or switch models.`
-          : error.message;
+        // A free model can be dead upstream (404) or rate-limited (429) while
+        // the gateway/account are healthy — say so and point at verified $0 ids.
+        const freeHint = freeModelFailureHint(payload.model, error.code);
+        const title = freeHint
+          ? `Free model unavailable · ${payload.model}`
+          : quota
+            ? "Quota exhausted · 429"
+            : `Request failed · ${error.status}`;
+        const body = freeHint
+          ? freeHint
+          : quota
+            ? `Quota exhausted for ${payload.model}.${
+                wait ? ` Retry window ~${wait} from now.` : ""
+              } Your prompt is saved — hit Retry or switch models.`
+            : error.message;
         const id = newId("m");
         const meta = makeMeta({
           verdict: evidence.cache,
@@ -704,7 +714,7 @@ export default function PlaygroundPage(): ReactNode {
           text: `${title}\n${body}`,
           meta,
         });
-        if (quota) setRetry({ messageId: id, payload });
+        if (quota || freeHint) setRetry({ messageId: id, payload });
         updateMessage(chatId, id, { evidence });
         recordStats(evidence, null, null, { error: error.message });
         setLastIO({

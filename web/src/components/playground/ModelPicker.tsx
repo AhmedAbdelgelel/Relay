@@ -103,7 +103,12 @@ export function ModelPicker({
   const groups = useMemo(() => {
     const base: Record<string, string[]> = {};
     for (const id of PROVIDER_ORDER) base[id] = [...PROVIDERS[id].models];
-    if (liveFree) base.openrouter = liveFree;
+    if (liveFree) {
+      // Keep the curated (verified-working) ids first, then the rest of the
+      // live $0 tier — free upstreams churn, so the first options stay usable.
+      const curated = PROVIDERS.openrouter.models;
+      base.openrouter = [...curated, ...liveFree.filter((id) => !curated.includes(id))];
+    }
     if (liveConfigured) {
       for (const configured of liveConfigured) {
         const group = providerForModel(configured, "google");
