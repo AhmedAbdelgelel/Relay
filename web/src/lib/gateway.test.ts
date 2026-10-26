@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  connectionFromLocationHash,
   GatewayClient,
   GatewayError,
   evidenceFrom,
@@ -471,5 +472,26 @@ describe("POST /v1/connections", () => {
     await expect(
       client.connectProvider({ provider: "openrouter", providerKey: "sk-tenant" }),
     ).rejects.toMatchObject({ status: 403, message: "connect 'openrouter'" });
+  });
+});
+
+describe("connection handoff links (URL fragment)", () => {
+  it("parses apiKey + baseUrl from the fragment", () => {
+    expect(
+      connectionFromLocationHash("#apiKey=lg_demo_key&baseUrl=http%3A%2F%2Fhost%3A3000"),
+    ).toEqual({ apiKey: "lg_demo_key", baseUrl: "http://host:3000" });
+  });
+
+  it("accepts key/gateway aliases and trims values", () => {
+    expect(connectionFromLocationHash("#key=%20lg_a%20&gateway=%20http://x:1%20")).toEqual({
+      apiKey: "lg_a",
+      baseUrl: "http://x:1",
+    });
+  });
+
+  it("returns null for hashes without a connection", () => {
+    expect(connectionFromLocationHash("")).toBeNull();
+    expect(connectionFromLocationHash("#")).toBeNull();
+    expect(connectionFromLocationHash("#section=2")).toBeNull();
   });
 });

@@ -19,7 +19,7 @@ import {
   useRef,
 } from "react";
 import type { ReactNode } from "react";
-import { GatewayClient, GatewayError, loadConnection, saveConnection } from "./gateway";
+import { connectionFromLocationHash, GatewayClient, GatewayError, loadConnection, saveConnection } from "./gateway";
 import {
   EMPTY_STATS,
   type ChatMessage,
@@ -386,11 +386,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const pollRef = useRef<(() => void) | null>(null);
 
   // One mount-time hydration pass: never read localStorage during render.
+  // A demo/handoff link may carry the connection in the URL fragment
+  // (`#apiKey=lg_…`); consume it once, persist it, and drop it from the URL.
   useEffect(() => {
+    const fromHash =
+      typeof window !== "undefined" ? connectionFromLocationHash(window.location.hash) : null;
+    if (fromHash) {
+      saveConnection(fromHash);
+      try {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      } catch {
+        /* history API unavailable: the fragment simply stays visible */
+      }
+    }
     dispatch({
       type: "hydrate",
       persisted: loadPersistedChats(),
-      connection: loadConnection(),
+      connection: fromHash ?? loadConnection(),
       advanced: loadAdvanced(),
     });
   }, []);

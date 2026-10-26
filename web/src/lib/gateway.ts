@@ -113,6 +113,28 @@ export function saveConnection(connection: Connection): void {
   }
 }
 
+/**
+ * Connection handed over in the URL **fragment**, e.g.
+ * `/playground#apiKey=lg_…&baseUrl=http://host:3000`. Fragments are never sent
+ * to the server (not in request lines, referrers or access logs), so a demo link
+ * can carry a key without baking it into the bundle. Hydration consumes the
+ * fragment, persists the connection like a manually entered one, and rewrites
+ * the URL so a later refresh doesn't keep the secret on screen.
+ */
+export function connectionFromLocationHash(hash: string): Connection | null {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (raw === "") return null;
+  try {
+    const params = new URLSearchParams(raw);
+    const apiKey = (params.get("apiKey") ?? params.get("key") ?? "").trim();
+    const baseUrl = (params.get("baseUrl") ?? params.get("gateway") ?? "").trim();
+    if (apiKey === "" && baseUrl === "") return null;
+    return { baseUrl, apiKey };
+  } catch {
+    return null;
+  }
+}
+
 /** Request id for `x-request-id` (event-handler context only, never render). */
 export function newRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {

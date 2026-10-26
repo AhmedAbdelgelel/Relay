@@ -25,6 +25,12 @@ All gateway traffic goes through a **same-origin proxy**: `/health`, `/metrics`,
 (`next.config.ts`, default `http://localhost:3000`; see `.env.example`). No CORS
 setup needed, no keys in the client bundle.
 
+**Handoff link (demo):** append the connection as a URL fragment — e.g.
+`http://localhost:3001/playground#apiKey=lg_…` (optional `&baseUrl=http://host:3000`).
+Fragments are never sent to the gateway (not in requests, referrers or access logs);
+the app consumes the fragment on hydration, persists the connection like a manually
+entered one, and rewrites the URL so a refresh doesn't keep the key on screen.
+
 ## Scripts
 
 | Script | What |
@@ -32,7 +38,7 @@ setup needed, no keys in the client bundle.
 | `npm run dev` | Dev server (Turbopack) |
 | `npm run build` / `start` | Production build / serve |
 | `npm run lint` | ESLint |
-| `npm run typecheck` | `tsc --noEmit` |
+| `npm run typecheck` | `next typegen && tsc --noEmit` |
 | `npm test` / `test:watch` | Vitest + Testing Library suite |
 
 ## Architecture
