@@ -316,7 +316,10 @@ export default function PlaygroundPage(): ReactNode {
     // streaming and the JSON paths, and aborts, all pass through here).
     setSummary(null);
     setTrace({ payload, summary: null, running: true });
-    if (streamed) setPending({ chatId, who: selectLabel, model: payload.model });
+    // Every request waits at least one provider round trip; show the animated
+    // thinking row immediately (streams clear it when the first token lands and
+    // switch to the Generating row; JSON replies clear it in `finally`).
+    setPending({ chatId, who: selectLabel, model: payload.model });
 
     let messageId: string | null = null;
     let ttftMs: number | null = null;

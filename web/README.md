@@ -90,3 +90,8 @@ npm test             # 109 tests — canonical parity, SSE parsing, stats, compo
 
 The suite is hermetic (no network, no real timers). Contract tests lock the exact
 cache-evidence copy so regressions surface as failing tests.
+
+While a request is in flight the thread shows an animated **Thinking…** row (three
+staggered dots, `role="status"`); the first SSE delta switches it to an animated
+**Generating…** row with the partial text, and Advanced appends chunk / elapsed /
+≈token stats. Both respect `prefers-reduced-motion`.

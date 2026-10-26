@@ -5,7 +5,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { Thread } from "@/components/playground/Thread";
+import { Thread, type LiveState, type PendingState } from "@/components/playground/Thread";
 import { cacheHint, SUGGESTIONS } from "@/components/playground/catalog";
 import type { ChatRecord, MessageMeta } from "@/lib/types";
 
@@ -143,5 +143,64 @@ describe("Thread message rows", () => {
     // …while the metrics line, evidence card and expanded card stay behind Advanced.
     expect(screen.queryByRole("button", { name: /cache HIT/ })).toBeNull();
     expect(screen.getByText("General Kenobi!")).toBeVisible();
+  });
+});
+
+function renderThreadState({
+  detailed = false,
+  live = null,
+  pending = null,
+}: {
+  detailed?: boolean;
+  live?: LiveState | null;
+  pending?: PendingState | null;
+}) {
+  render(
+    <Thread
+      chat={FILLED_CHAT}
+      fallbackLabel="Gemini"
+      live={live}
+      pending={pending}
+      regenerateId={null}
+      retryId={null}
+      detailed={detailed}
+      onRegenerate={vi.fn()}
+      onRetry={vi.fn()}
+      onPick={vi.fn()}
+    />,
+  );
+}
+
+describe("Thinking / Generating animation states", () => {
+  it("shows the animated Thinking row, with three bouncing dots, while a reply is pending", () => {
+    renderThreadState({ pending: { who: "OpenRouter", model: "cohere/north-mini-code:free" } });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Thinking");
+    expect(status.querySelectorAll(".relay-dot")).toHaveLength(3);
+  });
+
+  it("switches to an animated Generating row while streaming (simple mode keeps only the label)", () => {
+    renderThreadState({
+      live: { messageId: "m2", who: "OpenRouter", model: "cohere/north-mini-code:free", chunks: 3, elapsedMs: 1200 },
+      detailed: false,
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Generating");
+    expect(status.querySelectorAll(".relay-dot")).toHaveLength(3);
+    expect(status).not.toHaveTextContent("chunks");
+  });
+
+  it("appends chunk / elapsed / ≈token stats to the Generating row in Advanced mode", () => {
+    renderThreadState({
+      live: { messageId: "m2", who: "OpenRouter", model: "cohere/north-mini-code:free", chunks: 3, elapsedMs: 1200 },
+      detailed: true,
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("3 chunks");
+    expect(status).toHaveTextContent("1.2s");
+    expect(status).toHaveTextContent("≈");
   });
 });

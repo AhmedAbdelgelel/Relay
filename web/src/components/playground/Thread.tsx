@@ -172,10 +172,20 @@ function AssistantRow({
           />
         ) : null}
       </div>
-      {isLive && live && detailed ? (
-        <div className="mt-1 text-[11px] text-ink-3 tabular-nums">
-          streaming · {live.chunks} chunks · {(live.elapsedMs / 1000).toFixed(1)}s · ≈{" "}
-          {estimateTokens(message.text).toLocaleString("en-US")} tok
+      {isLive && live ? (
+        <div
+          className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-3 tabular-nums"
+          role="status"
+          aria-live="polite"
+        >
+          <ThinkingDots />
+          <span>Generating…</span>
+          {detailed ? (
+            <span>
+              · {live.chunks} chunks · {(live.elapsedMs / 1000).toFixed(1)}s · ≈{" "}
+              {estimateTokens(message.text).toLocaleString("en-US")} tok
+            </span>
+          ) : null}
         </div>
       ) : null}
       {!isLive && meta ? (
@@ -291,14 +301,26 @@ function ErrorRow({
   );
 }
 
+/** Three-dot bounce used by both the thinking (pre-first-token) and the
+ * generating (streaming) status lines. Animation lives in globals.css and the
+ * global `prefers-reduced-motion` rule turns it into a static marker. */
+function ThinkingDots() {
+  return (
+    <span className="flex items-center gap-1" aria-hidden="true">
+      <span className="relay-dot size-1.5 rounded-full bg-ink-3" />
+      <span className="relay-dot size-1.5 rounded-full bg-ink-3" />
+      <span className="relay-dot size-1.5 rounded-full bg-ink-3" />
+    </span>
+  );
+}
+
 function PendingRow({ who, model }: PendingState) {
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col" role="status" aria-live="polite">
       <WhoLine>{whoLine(null, model, who)}</WhoLine>
-      <div className="mt-1 flex items-center gap-1" aria-hidden="true">
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-3" />
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-3 [animation-delay:120ms]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-3 [animation-delay:240ms]" />
+      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-ink-3">
+        <ThinkingDots />
+        <span>Thinking…</span>
       </div>
     </div>
   );

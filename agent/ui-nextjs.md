@@ -144,7 +144,11 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
     throttled free upstream gets a dedicated error card ("Free model unavailable … pick another
     `$0` model") with a Retry action instead of a raw provider snippet. A `#apiKey=lg_…` URL
     fragment can hand a working, already-connected demo link to any browser (fragment never
-    reaches the gateway).
+    reaches the gateway). While a request runs the thread shows an animated **Thinking…** row;
+    the first streamed delta switches it to an animated **Generating…** row (Advanced appends
+    chunk/elapsed/≈token stats) — both `role="status"` and reduced-motion aware. Hijacked SSE
+    responses now carry their own CORS evidence headers, so a custom cross-origin Gateway URL
+    can stream too.
 
 ## Verification (results)
 
