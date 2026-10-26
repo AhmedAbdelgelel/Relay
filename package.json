@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
-    "eval": "tsx scripts/eval/run.ts"
+    "eval": "tsx scripts/eval/run.ts",
+    "bench": "tsx scripts/bench/cache.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
