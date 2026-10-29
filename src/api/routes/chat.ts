@@ -14,7 +14,7 @@ import type { ChatRequest, ChatResponse, TokenUsage } from "../../domain/types.j
 import { GatewayError } from "../../domain/types.js";
 import { promptTextForEmbedding, type EmbeddingProvider } from "../../embeddings/EmbeddingProvider.js";
 import type { GatewayConfig } from "../../infrastructure/config.js";
-import { toGatewayError } from "../../infrastructure/errors.js";
+import { redactSecrets, toGatewayError } from "../../infrastructure/errors.js";
 import { log } from "../../infrastructure/logger.js";
 import { metrics } from "../../observability/metrics.js";
 import { isReusableSemantic, systemFingerprint, POLICY_VERSION } from "../../policy/reuse.js";
@@ -23,15 +23,45 @@ import { missingCapabilities } from "../../providers/capabilities.js";
 import { providerForModel, providerRequiresKey, providerWithKey, routeProviderName } from "../../providers/factory.js";
 import { buildChain, executeChain, TargetBreaker, backoffDelayMs, sleepAbortable, DEFAULT_FALLBACK_POLICY } from "../../routing/fallback.js";
 
-const BodySchema = z.object({
-  model: z.string().min(1, "model is required"),
-  messages: z
-    .array(z.object({ role: z.enum(["system", "user", "assistant"]), content: z.string().min(1) }))
-    .min(1, "messages must contain at least one message"),
-  temperature: z.number().min(0).max(2).default(1.0),
-  max_tokens: z.number().int().positive().optional(),
-  stream: z.boolean().default(false),
-});
+const StopSchema = z.union(
+  [
+    z.string().min(1).max(128),
+    z.array(z.string().min(1).max(128)).min(1).max(4),
+  ],
+  { errorMap: () => ({ message: "stop must be a string or an array of 1-4 strings, each 1-128 characters" }) },
+);
+
+// Explicit supported request surface. Unknown fields are REJECTED (`.strict()`)
+// instead of silently stripped: accepting `tools`/`n`/`presence_penalty`/... and
+// then dropping them made the gateway execute a different request than the
+// client asked for (and cache the wrong answer under the client's identity).
+// Supported generation settings: model, messages, temperature, max_tokens,
+// stream, top_p, stop.
+const BodySchema = z
+  .object({
+    model: z.string().min(1, "model is required"),
+    messages: z
+      .array(z.object({ role: z.enum(["system", "user", "assistant"]), content: z.string().min(1) }))
+      .min(1, "messages must contain at least one message"),
+    temperature: z.number().min(0).max(2).default(1.0),
+    max_tokens: z.number().int().positive().optional(),
+    stream: z.boolean().default(false),
+    top_p: z.number().min(0).max(1).optional(),
+    stop: StopSchema.optional(),
+  })
+  .strict();
+
+/** Turn Zod issues into one client-facing message; unknown keys are named. */
+function validationMessage(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => {
+      if (issue.code === "unrecognized_keys") {
+        return issue.keys.map((key) => `${key}: unsupported field`).join("; ");
+      }
+      return `${issue.path.join(".")}: ${issue.message}`;
+    })
+    .join("; ");
+}
 
 export interface ChatRouteDeps {
   auth: {
@@ -100,7 +130,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
 
     const parsed = BodySchema.safeParse(request.body);
     if (!parsed.success) {
-      const msg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+      const msg = validationMessage(parsed.error);
       log({ request_id: requestId, provider: provider.name, status: 400, error_code: "invalid_request" });
       return reply.status(400).send({ error: { code: "invalid_request", message: msg, request_id: requestId } });
     }
@@ -111,6 +141,8 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       max_tokens: parsed.data.max_tokens,
       stream: parsed.data.stream,
     };
+    if (parsed.data.top_p !== undefined) req.top_p = parsed.data.top_p;
+    if (parsed.data.stop !== undefined) req.stop = parsed.data.stop;
     reply.header("x-lane", auth.lane);
     if (auth.lane === "registered") reply.header("x-key-id", auth.keyId);
     const registered = auth.lane === "registered";
@@ -136,6 +168,17 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         log({ request_id: requestId, provider: credentialName, credential: "unavailable", error: cred.reason });
       }
     }
+    // Known secret material that must never be echoed in client-facing error
+    // messages: operator env keys, the tenant credential used for this request,
+    // and the anonymous try-out key. (Logs never carry provider message bodies.)
+    const errorSecrets = [
+      cfg.geminiApiKey,
+      cfg.openaiApiKey,
+      cfg.anthropicApiKey,
+      cfg.openRouterKey,
+      tenantKey ?? "",
+      auth.lane === "anonymous" ? auth.providerKey : "",
+    ].filter((s) => typeof s === "string" && s.length >= 8);
 
     let serving: ProviderAdapter;
     if (registered) {
@@ -171,7 +214,11 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       return reply.status(400).send({ error: { code: "unsupported_capability", message: msg, request_id: requestId } });
     }
 
-    const { key: cacheKey, hash: cacheHash } = buildExactCacheKey(serving.name, req);
+    // The exact cache is TENANT-SCOPED: `tenant` is the authenticated tenant
+    // ("" for the anonymous lane, which never caches). Never derive it from a
+    // client header.
+    const { key: cacheKey, hash: cacheHash } = buildExactCacheKey(serving.name, req, tenant);
+
     reply.header("x-cache-hash", cacheHash);
 
     const ctrl = new AbortController();
@@ -197,7 +244,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         if (useCache) {
           for (const lt of chain) {
             if (!breaker.canUse(lt.name)) continue;
-            const lookupKey = lt.adapter === primary ? cacheKey : buildExactCacheKey(lt.adapter.name, req).key;
+            const lookupKey = lt.adapter === primary ? cacheKey : buildExactCacheKey(lt.adapter.name, req, tenant).key;
             const t0 = Date.now();
             try {
               const raw = await cache!.get(lookupKey);
@@ -241,7 +288,17 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
           }
           metrics.inc("exact_misses");
         }
-        const useSemantic = registered && cfg.semanticEnabled && deps.semanticStore !== undefined && deps.embedder !== undefined;
+        // Semantic reuse policy for newly supported generation settings:
+        // SemanticEntry/the vector store record temperature/max_tokens/system
+        // fingerprint but NOT top_p/stop. Reusing a row for a request that sets
+        // those could return output sampled under different settings, so such
+        // requests skip BOTH semantic lookup and admission (no embedding cost,
+        // no store writes). Exact caching still covers them — its canonical
+        // identity includes top_p/stop. See src/policy/reuse.ts (same guard).
+        const semanticEligible = req.top_p === undefined && req.stop === undefined;
+        const useSemantic =
+          registered && cfg.semanticEnabled && deps.semanticStore !== undefined && deps.embedder !== undefined && semanticEligible;
+
         let queryEmbedding: number[] | undefined;
         let queryText = "";
         if (useSemantic) {
@@ -312,7 +369,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
             const raw = chained.result;
             metrics.observeProviderLatency(Date.now() - pt0);
             const out: ChatResponse = { ...raw, content: normalizeChatContent(raw.content) };
-            const writeKey = chained.fallback ? buildExactCacheKey(serving.name, req).key : cacheKey;
+            const writeKey = chained.fallback ? buildExactCacheKey(serving.name, req, tenant).key : cacheKey;
             if (useCache && out.content.trim() !== "") {
               const payload: CachedChatResponse = {
                 content: out.content,
@@ -511,6 +568,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       return;
     } catch (err) {
       const gw = err instanceof GatewayError ? err : toGatewayError(serving.name, err);
+      const safeMessage = redactSecrets(gw.message, errorSecrets);
       if (req.stream) metrics.inc("provider_errors");
       log({ request_id: requestId, provider: serving.name, status: gw.status, latency_ms: Date.now() - start, stream: req.stream, error_code: gw.code });
       if (reply.raw.headersSent) {
@@ -519,7 +577,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       }
       if (hijacked) {
         const retryAfter = gw.status === 429 ? parseRetryAfter(gw.message) : undefined;
-        const body = JSON.stringify({ error: { code: gw.code, message: gw.message, request_id: requestId, ...(retryAfter ? { retry_after: retryAfter } : {}) } });
+        const body = JSON.stringify({ error: { code: gw.code, message: safeMessage, request_id: requestId, ...(retryAfter ? { retry_after: retryAfter } : {}) } });
         try {
           if (!reply.raw.destroyed) {
             const errHeaders: Record<string, string> = {
@@ -542,7 +600,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
         return reply;
       }
       const retryAfter = gw.status === 429 ? parseRetryAfter(gw.message) : undefined;
-      return reply.status(gw.status).send({ error: { code: gw.code, message: gw.message, request_id: requestId, ...(retryAfter ? { retry_after: retryAfter } : {}) } });
+      return reply.status(gw.status).send({ error: { code: gw.code, message: safeMessage, request_id: requestId, ...(retryAfter ? { retry_after: retryAfter } : {}) } });
     } finally {
       clearTimeout(timer);
     }
@@ -562,6 +620,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       semanticTopK: cfg.semanticTopK,
       semanticTtlSec: cfg.semanticTtlSec,
       upstreamTimeoutMs: cfg.upstreamTimeoutMs,
+      allowPrivateProviderUrls: cfg.allowPrivateProviderUrls === true,
     },
   }));
 }

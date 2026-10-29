@@ -163,7 +163,7 @@ describe("live UI against a real gateway", () => {
     const text = card.textContent || "";
     expect(text).toContain("MISS");
     expect(text).toContain("No entry for this key");
-    expect(text).toContain("llm:exact:v1:mock:"); // real key, real provider name
+    expect(text).toContain("llm:exact:v2:<tenant>:mock:"); // real key, real provider name
     expect(text).toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/); // real request id
     expect(text).toContain("mock · gemini-3.6-flash");
     // flagship: browser-rebuilt canonical hashed with crypto.subtle equals the
@@ -204,7 +204,7 @@ describe("live UI against a real gateway", () => {
     const text = card.textContent || "";
     expect(card.querySelector(".badge.bypass")).toBeTruthy();
     expect(text).toContain("stream:true bypasses the exact cache");
-    expect(text).toContain("llm:exact:v1:mock:"); // the would-be key
+    expect(text).toContain("llm:exact:v2:<tenant>:mock:"); // the would-be key
     expect(text).toContain("TTFT");
     expect(text).toMatch(/\(first token\)/); // x-latency-ms header read as TTFT
     expect(text).toContain("3 chunks · SSE");
@@ -234,6 +234,7 @@ describe("live UI against a real gateway", () => {
     expect(restored.querySelector(".content")!.textContent).toBe(beforeText);
     const card = openCard(restored); // stored meta must rebuild a full card
     expect(card.querySelector("pre.canonical")).toBeTruthy();
-    expect(card.textContent).toContain("llm:exact:v1:mock:");
+    expect(card.textContent).toContain("llm:exact:v2:<tenant>:mock:");
   });
 });
+

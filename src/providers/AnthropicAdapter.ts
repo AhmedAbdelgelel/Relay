@@ -53,6 +53,11 @@ function toAnthropicBody(req: ChatRequest, defaultModel: string): Record<string,
   };
   if (req.temperature !== undefined) body["temperature"] = req.temperature;
   if (systemParts.length > 0) body["system"] = systemParts.join("\n");
+  // Anthropic has no `stop` field: it expects `stop_sequences: string[]`.
+  // A bare-string stop is the same single-sequence request, so always send an
+  // array. Undefined fields are never added (existing bodies stay unchanged).
+  if (req.top_p !== undefined) body["top_p"] = req.top_p;
+  if (req.stop !== undefined) body["stop_sequences"] = Array.isArray(req.stop) ? req.stop : [req.stop];
   return body;
 }
 
@@ -172,3 +177,4 @@ export class AnthropicAdapter implements ProviderAdapter {
     }
   }
 }
+

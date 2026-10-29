@@ -11,7 +11,9 @@
     "test:live": "vitest run --config vitest.live.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "eval": "tsx scripts/eval/run.ts",
-    "bench": "tsx scripts/bench/cache.ts"
+    "eval:real": "tsx scripts/eval/realEmbeddings.ts",
+    "bench": "tsx scripts/bench/cache.ts",
+    "bench:perf": "tsx scripts/bench/perf.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",

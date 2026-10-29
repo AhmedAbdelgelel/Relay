@@ -295,7 +295,7 @@ describe("config boot invariants", () => {
     );
     expect(unset.upstreamTimeoutMs).toBe(25000);
     expect(unset.cacheTtlSec).toBe(3600);
-    expect(unset.semanticThreshold).toBe(0.92);
+    expect(unset.semanticThreshold).toBe(0.95);
     expect(unset.semanticTopK).toBe(3);
     expect(unset.semanticTtlSec).toBe(3600);
     expect(unset.savedUsdPer1kTokens).toBe(0);
@@ -379,3 +379,4 @@ describe("real socket run", () => {
     await app.close();
   });
 });
+

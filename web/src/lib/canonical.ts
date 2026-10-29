@@ -79,7 +79,14 @@ export async function sha256Hex(text: string): Promise<string | null> {
   }
 }
 
-/** The exact-cache key the gateway derives for this hash. */
-export function exactCacheKey(provider: string, hash: string): string {
-  return `llm:exact:v1:${provider}:${hash}`;
+/**
+ * The exact-cache key the gateway derives for this hash.
+ *
+ * Storage keys are tenant-scoped (v2): the gateway prefixes the authenticated
+ * tenant before the provider. The control plane does not know the tenant id
+ * (it is derived from the gateway key server-side), so `<tenant>` is shown as a
+ * placeholder; the hash itself remains tenant-independent.
+ */
+export function exactCacheKey(provider: string, hash: string, tenant = "<tenant>"): string {
+  return `llm:exact:v2:${tenant}:${provider}:${hash}`;
 }

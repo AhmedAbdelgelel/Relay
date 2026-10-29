@@ -60,19 +60,32 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
     return h;
   }
 
+  /**
+   * OpenAI-compatible request body. Supported sampling/stop settings are
+   * forwarded verbatim; `undefined` fields are never added, so a request that
+   * does not use them keeps the exact body it had before they were supported.
+   */
+  private bodyFor(req: ChatRequest, stream: boolean, includeUsage = false): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      model: req.model || this.defaultModel,
+      messages: req.messages,
+      temperature: req.temperature,
+      max_tokens: req.max_tokens,
+      stream,
+    };
+    if (req.top_p !== undefined) body["top_p"] = req.top_p;
+    if (req.stop !== undefined) body["stop"] = req.stop;
+    if (includeUsage) body["stream_options"] = { include_usage: true };
+    return body;
+  }
+
   async chat(req: ChatRequest, signal: AbortSignal): Promise<ChatResponse> {
     try {
       const res = await fetch(`${this.baseURL}/chat/completions`, {
         method: "POST",
         headers: this.headers(),
         signal,
-        body: JSON.stringify({
-          model: req.model || this.defaultModel,
-          messages: req.messages,
-          temperature: req.temperature,
-          max_tokens: req.max_tokens,
-          stream: false,
-        }),
+        body: JSON.stringify(this.bodyFor(req, false)),
       });
       if (!res.ok) throw providerHttpError(this.name, res.status, await res.text());
       const json = (await res.json()) as OpenAIChatJson;
@@ -92,15 +105,7 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
   }
 
   private streamBody(req: ChatRequest, includeUsage: boolean): string {
-    const body: Record<string, unknown> = {
-      model: req.model || this.defaultModel,
-      messages: req.messages,
-      temperature: req.temperature,
-      max_tokens: req.max_tokens,
-      stream: true,
-    };
-    if (includeUsage) body["stream_options"] = { include_usage: true };
-    return JSON.stringify(body);
+    return JSON.stringify(this.bodyFor(req, true, includeUsage));
   }
 
   private fetchStream(req: ChatRequest, signal: AbortSignal, includeUsage: boolean): Promise<Response> {
@@ -167,3 +172,4 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
     }
   }
 }
+

@@ -94,6 +94,70 @@ describe("semantic reuse", () => {
     await loose.app.close();
   });
 
+  it("policy: requests with top_p skip semantic lookup AND admission; exact cache still covers them", async () => {
+    const provider = new ScriptedProvider("mock");
+    const embedder = new KeywordEmbedder();
+    const { store, calls } = spyStore(new InMemoryVectorStore());
+    const { app } = makeApp({ auth: lanes.auth, provider, embedder, semanticStore: store });
+
+    // No embedding is computed, no vector lookup, no row admitted: the policy
+    // cannot verify the stored row's top_p, so the semantic layer is skipped.
+    const tuned = await chat(app, lane.key, ask("gateway sampling", { top_p: 0.5 }));
+    expect(tuned.statusCode).toBe(200);
+    expect(tuned.headers["x-cache"]).toBe("MISS");
+    expect(calls.finds).toBe(0);
+    expect(calls.saves).toBe(0);
+    expect(embedder.calls).toBe(0);
+
+    // Exact caching still works: top_p is part of the exact identity.
+    expect((await chat(app, lane.key, ask("gateway sampling", { top_p: 0.5 }))).headers["x-cache"]).toBe("HIT");
+
+    // The same prompt without top_p is a different exact request and now
+    // DOES use the semantic layer (which is empty, so it MISSes and admits).
+    const plain = await chat(app, lane.key, ask("gateway sampling"));
+    expect(plain.headers["x-cache"]).toBe("MISS");
+    expect(calls.finds).toBe(1);
+    expect(calls.saves).toBe(1);
+    expect(provider.calls).toBe(2);
+
+    // A paraphrase that WOULD hit semantically is still skipped when it sets
+    // top_p: the lookup counter stays put and no SEMANTIC_HIT is emitted.
+    const paraphrase = await chat(app, lane.key, ask("gateway sampling reworded", { top_p: 0.5 }));
+    expect(paraphrase.statusCode).toBe(200);
+    expect(paraphrase.headers["x-cache"]).toBe("MISS");
+    expect(paraphrase.headers["x-semantic-similarity"]).toBeUndefined();
+    expect(calls.finds).toBe(1);
+    expect(provider.calls).toBe(3);
+    await app.close();
+  });
+
+  it("policy: requests with stop skip semantic reuse too (a seeded paraphrase is never served)", async () => {
+    const provider = new ScriptedProvider("mock");
+    const embedder = new KeywordEmbedder();
+    const { store, calls } = spyStore(new InMemoryVectorStore());
+    const { app } = makeApp({ auth: lanes.auth, provider, embedder, semanticStore: store });
+
+    // Seed a reusable row with a plain request.
+    const seed = await chat(app, lane.key, ask("gateway stop policy"));
+    expect(seed.headers["x-cache"]).toBe("MISS");
+    expect(calls.saves).toBe(1);
+    const findsAfterSeed = calls.finds;
+
+    // Same family, but `stop` is set: semantic lookup is skipped.
+    const withStop = await chat(app, lane.key, ask("gateway stop policy reworded", { stop: "END" }));
+    expect(withStop.statusCode).toBe(200);
+    expect(withStop.headers["x-cache"]).toBe("MISS");
+    expect(withStop.headers["x-semantic-similarity"]).toBeUndefined();
+    expect(calls.finds).toBe(findsAfterSeed);
+    expect(provider.calls).toBe(2);
+
+    // Without stop the same paraphrase is a normal semantic hit.
+    const plainParaphrase = await chat(app, lane.key, ask("gateway stop policy reworded"));
+    expect(plainParaphrase.headers["x-cache"]).toBe("SEMANTIC_HIT");
+    expect(calls.finds).toBe(findsAfterSeed + 1);
+    await app.close();
+  });
+
   it("policy: temperature drift blocks reuse; the drifted request admits its own row", async () => {
     const provider = new ScriptedProvider("mock");
     const { app } = makeApp({ auth: lanes.auth, provider, embedder: new KeywordEmbedder() });

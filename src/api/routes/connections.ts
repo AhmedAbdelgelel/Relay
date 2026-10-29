@@ -9,7 +9,7 @@ import { PROVIDER_NAMES, type GatewayConfig } from "../../infrastructure/config.
 import { log } from "../../infrastructure/logger.js";
 import { metrics } from "../../observability/metrics.js";
 import { defaultEndpointFor } from "../../providers/factory.js";
-import { BaseUrlSchema } from "./baseUrl.js";
+import { BaseUrlSchema, providerUrlPolicy, validateProviderBaseUrl } from "./baseUrl.js";
 
 export interface ConnectionsRouteDeps {
   apiKeys: ApiKeyStore;
@@ -60,7 +60,21 @@ export function registerConnectionsRoutes(
     }
 
     const { provider, provider_key: providerKey } = parsed.data;
-    const baseUrl = parsed.data.base_url ?? null;
+    let baseUrl = parsed.data.base_url ?? null;
+    if (baseUrl !== null) {
+      // Same SSRF policy as registration; reject/resolve before the credential
+      // upsert so a rejected URL cannot replace a working connection.
+      const check = await validateProviderBaseUrl(baseUrl, {
+        policy: providerUrlPolicy(cfg.allowPrivateProviderUrls),
+      });
+      if (!check.ok) {
+        log({ request_id: requestId, status: 400, error_code: "invalid_request", base_url_rejected: true });
+        return reply.status(400).send({
+          error: { code: "invalid_request", message: `base_url: ${check.error}`, request_id: requestId },
+        });
+      }
+      // Keep the submitted (trimmed) form for API compatibility; validation\n      // used the canonical URL/DNS result.\n      baseUrl = baseUrl.trim();
+    }
 
     const saved = await deps.credentials.save(tenant, provider, providerKey, baseUrl);
     if (saved.status === "unavailable") {
@@ -71,7 +85,19 @@ export function registerConnectionsRoutes(
     }
 
     const endpoint = baseUrl ?? defaultEndpointFor(provider, cfg);
-    log({ request_id: requestId, status: 201, provider, endpoint, connected: true });
+    let endpointHost = endpoint;
+    try {
+      endpointHost = new URL(endpoint).host;
+    } catch {
+      /* non-URL endpoints (e.g. mock "in-process") log verbatim */
+    }
+    log({
+      request_id: requestId,
+      status: 201,
+      provider,
+      endpoint_host: endpointHost,
+      connected: true,
+    });
     return reply.status(201).send({ provider, base_url: baseUrl, endpoint, connected: true });
   });
 
@@ -101,3 +127,4 @@ export function registerConnectionsRoutes(
     });
   });
 }
+

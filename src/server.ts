@@ -27,7 +27,9 @@ function warmEmbedder(embedder: EmbeddingProvider | undefined): void {
 
 export function buildServer() {
   const cfg = loadConfig();
-  const app = Fastify({ logger: false });
+  // Bounded request bodies: Fastify's 1 MiB default is large for a gateway that
+  // caches prompts; 256 KiB covers long-context tests while capping abuse.
+  const app = Fastify({ logger: false, bodyLimit: 512 * 1024 });
   const provider = createProviderFromEnv(cfg);
   const providers = createProvidersFromEnv(cfg);
   const cache = createCacheFromEnv(cfg);
@@ -39,7 +41,7 @@ export function buildServer() {
     credentials: new InMemoryCredentialStore(new CredentialCipher(cfg.credEncKey)),
   };
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
-  registerRegisterRoutes(app, auth);
+  registerRegisterRoutes(app, cfg, auth);
   registerConnectionsRoutes(app, cfg, auth);
   registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers);
@@ -49,7 +51,7 @@ export function buildServer() {
 
 export async function buildServerAsync() {
   const cfg = loadConfig();
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, bodyLimit: 512 * 1024 });
   const provider = createProviderFromEnv(cfg);
   const providers = createProvidersFromEnv(cfg);
   const cache = createCacheFromEnv(cfg);
@@ -58,7 +60,7 @@ export async function buildServerAsync() {
   warmEmbedder(embedder);
   const auth = await createAuthStoresFromEnv(cfg);
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
-  registerRegisterRoutes(app, auth);
+  registerRegisterRoutes(app, cfg, auth);
   registerConnectionsRoutes(app, cfg, auth);
   registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers);
@@ -81,3 +83,4 @@ if (isMain && !process.env.VITEST) {
     process.exit(1);
   });
 }
+

@@ -13,7 +13,7 @@ export function CacheInspectors({ health }: { health: HealthInfo | null }) {
 
   const exactJson = JSON.stringify(
     {
-      key: "llm:exact:v1:<provider>:<sha256(canonical)>",
+      key: "llm:exact:v2:<tenant>:<provider>:<sha256(canonical)>",
       identity_fields: ["model", "messages", "temperature", "max_tokens"],
       normalization: "trim whitespace, sort keys, stable JSON",
       verdicts: ["HIT", "MISS", "BYPASS (stream:true)", "DISABLED"],
@@ -67,3 +67,4 @@ export function CacheInspectors({ health }: { health: HealthInfo | null }) {
     </div>
   );
 }
+

@@ -46,6 +46,14 @@ export interface GatewayConfig {
   savedUsdPer1kTokens: number;
   gatewayApiKeys: SeedApiKey[];
   credEncKey: string;
+  /**
+   * SSRF opt-in: allow tenant-supplied provider base_urls that resolve to
+   * loopback/private/link-local addresses (e.g. a self-hosted Ollama on
+   * 127.0.0.1 or 10.x). Default deny (absent or false). Optional so
+   * externally-built GatewayConfig literals stay valid; treat undefined as
+   * false (see providerUrlPolicy() in src/api/routes/baseUrl.ts).
+   */
+  allowPrivateProviderUrls?: boolean;
 }
 
 function str(env: NodeJS.ProcessEnv, name: string, fallback = ""): string {
@@ -160,7 +168,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     embeddingProvider,
     embeddingModel: str(env, "EMBEDDING_MODEL"),
     semanticEnabled: bool(env, "SEMANTIC_ENABLED", true),
-    semanticThreshold: frac(env, "SEMANTIC_THRESHOLD", 0.92),
+    semanticThreshold: frac(env, "SEMANTIC_THRESHOLD", 0.95),
     semanticTopK: positiveInt(env, "SEMANTIC_TOP_K", 3),
     semanticTtlSec: num(env, "SEMANTIC_TTL_S", 3600),
     semanticStore,
@@ -168,5 +176,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     savedUsdPer1kTokens: nonNegative(env, "SAVED_USD_PER_1K_TOKENS", 0),
     gatewayApiKeys: seedApiKeys(str(env, "GATEWAY_API_KEYS")),
     credEncKey,
+    allowPrivateProviderUrls: bool(env, "ALLOW_PRIVATE_PROVIDER_URLS", false),
   };
 }

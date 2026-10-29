@@ -298,8 +298,9 @@ export function buildReport(points: readonly SweepPoint[], a: CostAssumption = D
   }
   lines.push("");
   lines.push(
-    "`SEMANTIC_THRESHOLD` stays **0.92** — the current default; the sweep re-confirms it as the cost-aware optimum " +
-      "on this set. Any default change must link to this report (agent/review.md §5 gate).",
+    "The production default is **0.95** — the real-embedding zero-false-positive boundary in " +
+      "`evaluation/real-embeddings-report.md`. This controlled sweep's cost-aware optimum on its prescribed cosines is **0.92**; " +
+      "it validates the policy math and is not evidence that the production default should be 0.92 (agent/review.md §5 gate).",
   );
   lines.push("");
   lines.push("## Notes");
@@ -315,3 +316,4 @@ export function buildReport(points: readonly SweepPoint[], a: CostAssumption = D
   lines.push("");
   return lines.join("\n");
 }
+

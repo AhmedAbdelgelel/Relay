@@ -10,6 +10,9 @@ import { laneAuth } from "../helpers/lane.js";
 import { chat, json, makeApp, ScriptedProvider, sleep } from "./harness.js";
 
 const lanes = await laneAuth("mock");
+// Exact-cache storage keys are tenant-scoped (v2); manual seeding/lookup in
+// these tests must use the lane's authenticated tenant.
+const TENANT = lanes.laneFor("mock").tenant;
 const body = (content: string, extra: Record<string, unknown> = {}) => ({
   model: "m",
   messages: [{ role: "user", content }],
@@ -85,6 +88,77 @@ describe("exact cache identity", () => {
     await app.close();
   });
 
+  it("top_p is identity: different nucleus settings never collide, each replays itself", async () => {
+    const provider = new ScriptedProvider("mock");
+    const { app } = makeApp({ auth: lanes.auth, provider, env: { SEMANTIC_ENABLED: "false" } });
+    const lane = lanes.laneFor("mock").key;
+
+    const p5 = await chat(app, lane, body("nucleus probe", { top_p: 0.5 }));
+    expect(p5.headers["x-cache"]).toBe("MISS");
+    const p9 = await chat(app, lane, body("nucleus probe", { top_p: 0.9 }));
+    expect(p9.headers["x-cache"]).toBe("MISS");
+    expect(p9.headers["x-cache-hash"]).not.toBe(p5.headers["x-cache-hash"]);
+    expect((await chat(app, lane, body("nucleus probe", { top_p: 0.5 }))).headers["x-cache"]).toBe("HIT");
+    const p9again = await chat(app, lane, body("nucleus probe", { top_p: 0.9 }));
+    expect(p9again.headers["x-cache"]).toBe("HIT");
+    expect(p9again.headers["x-cache-hash"]).toBe(p9.headers["x-cache-hash"]);
+    expect(provider.calls).toBe(2);
+    await app.close();
+  });
+
+  it("stop is identity: different sequences never collide; string and 1-element array are equivalent", async () => {
+    const provider = new ScriptedProvider("mock");
+    const { app } = makeApp({ auth: lanes.auth, provider, env: { SEMANTIC_ENABLED: "false" } });
+    const lane = lanes.laneFor("mock").key;
+
+    const one = await chat(app, lane, body("stop probe", { stop: "END" }));
+    expect(one.headers["x-cache"]).toBe("MISS");
+    // `stop: "END"` and `stop: ["END"]` are the same API-level request.
+    const arrayForm = await chat(app, lane, body("stop probe", { stop: ["END"] }));
+    expect(arrayForm.headers["x-cache"]).toBe("HIT");
+    expect(arrayForm.headers["x-cache-hash"]).toBe(one.headers["x-cache-hash"]);
+
+    const two = await chat(app, lane, body("stop probe", { stop: ["END", "STOP"] }));
+    expect(two.headers["x-cache"]).toBe("MISS");
+    expect(two.headers["x-cache-hash"]).not.toBe(one.headers["x-cache-hash"]);
+    expect((await chat(app, lane, body("stop probe", { stop: ["END", "STOP"] }))).headers["x-cache"]).toBe("HIT");
+    expect(provider.calls).toBe(2);
+    await app.close();
+  });
+
+  it("canonical identity includes top_p/stop but adds no keys for requests that omit them", () => {
+    const plain = buildExactCacheKey(
+      "mock",
+      { model: "m", messages: [{ role: "user", content: "plain" }], temperature: 1, stream: false },
+      TENANT,
+    );
+    // Version anchor: the identity of a request without the new fields is
+    // byte-identical to the pre-top_p/stop canonical form (browser parity and
+    // existing stored hashes stay meaningful).
+    expect(plain.canonical).toBe('{"messages":[{"content":"plain","role":"user"}],"model":"m","temperature":1}');
+
+    const tuned = buildExactCacheKey(
+      "mock",
+      { model: "m", messages: [{ role: "user", content: "plain" }], temperature: 1, stream: false, top_p: 0.25, stop: "DONE" },
+      TENANT,
+    );
+    expect(tuned.canonical).toContain('"top_p":0.25');
+    expect(tuned.canonical).toContain('"stop":["DONE"]'); // normalized to array form
+    expect(tuned.hash).not.toBe(plain.hash);
+
+    const stringStop = buildExactCacheKey(
+      "mock",
+      { model: "m", messages: [{ role: "user", content: "plain" }], temperature: 1, stream: false, stop: "DONE" },
+      TENANT,
+    );
+    const arrayStop = buildExactCacheKey(
+      "mock",
+      { model: "m", messages: [{ role: "user", content: "plain" }], temperature: 1, stream: false, stop: ["DONE"] },
+      TENANT,
+    );
+    expect(arrayStop.hash).toBe(stringStop.hash);
+  });
+
   it("model is identity: same text under another model -> different hash, no cross-model bleed", async () => {
     const provider = new ScriptedProvider("mock");
     const { app } = makeApp({ auth: lanes.auth, provider });
@@ -103,7 +177,12 @@ describe("exact cache identity", () => {
     const provider = new ScriptedProvider("mock");
     const { app } = makeApp({ auth: lanes.auth, provider });
     const res = await chat(app, lanes.laneFor("mock").key, body("hash parity"));
-    const expected = buildExactCacheKey("mock", { model: "m", messages: [{ role: "user", content: "hash parity" }], temperature: 1, stream: false });
+    const expected = buildExactCacheKey(
+      "mock",
+      { model: "m", messages: [{ role: "user", content: "hash parity" }], temperature: 1, stream: false },
+      TENANT,
+    );
+
     expect(res.headers["x-cache-hash"]).toBe(expected.hash);
     await app.close();
   });
@@ -152,7 +231,7 @@ describe("exact cache lifecycle", () => {
     const cache = new InMemoryCache();
     const { app } = makeApp({ auth: lanes.auth, provider, cache });
     const req = { model: "m", messages: [{ role: "user" as const, content: "malformed neighbor" }], temperature: 1 };
-    await cache.set(buildExactCacheKey("mock", { ...req, stream: false }).key, "{definitely not json", 60);
+    await cache.set(buildExactCacheKey("mock", { ...req, stream: false }, TENANT).key, "{definitely not json", 60);
     const res = await chat(app, lanes.laneFor("mock").key, { model: req.model, messages: req.messages });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-cache"]).toBe("MISS");
@@ -348,7 +427,7 @@ describe("malformed-shape eviction", () => {
     const { app } = makeApp({ auth: lanes.auth, provider, cache, env: { SEMANTIC_ENABLED: "false" } });
     const lane = lanes.laneFor("mock").key;
     const req = { model: "m", messages: [{ role: "user" as const, content: "wrong shape neighbor" }] };
-    const key = buildExactCacheKey("mock", { ...req, temperature: 1, stream: false }).key;
+    const key = buildExactCacheKey("mock", { ...req, temperature: 1, stream: false }, TENANT).key;
     await inner.set(key, JSON.stringify({ content: 5, model: "m" }), 60);
 
     const res = await chat(app, lane, req);
@@ -379,7 +458,7 @@ describe("malformed-shape eviction", () => {
     const { app } = makeApp({ auth: lanes.auth, provider, cache, env: { SEMANTIC_ENABLED: "false" } });
     const lane = lanes.laneFor("mock").key;
     const req = { model: "m", messages: [{ role: "user" as const, content: "blank neighbor" }] };
-    const key = buildExactCacheKey("mock", { ...req, temperature: 1, stream: false }).key;
+    const key = buildExactCacheKey("mock", { ...req, temperature: 1, stream: false }, TENANT).key;
     await inner.set(key, JSON.stringify({ content: "   ", model: "m", usage: { prompt_tokens: 1, completion_tokens: 0 } }), 60);
 
     const res = await chat(app, lane, req);

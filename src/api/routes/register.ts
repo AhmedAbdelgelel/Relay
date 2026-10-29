@@ -4,9 +4,9 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ApiKeyStore } from "../../auth/ApiKeyStore.js";
 import type { CredentialStore } from "../../auth/CredentialStore.js";
-import { PROVIDER_NAMES } from "../../infrastructure/config.js";
+import { PROVIDER_NAMES, type GatewayConfig } from "../../infrastructure/config.js";
 import { log } from "../../infrastructure/logger.js";
-import { BaseUrlSchema } from "./baseUrl.js";
+import { BaseUrlSchema, providerUrlPolicy, validateProviderBaseUrl } from "./baseUrl.js";
 
 export interface RegisterRouteDeps {
   apiKeys: ApiKeyStore;
@@ -22,7 +22,11 @@ const BodySchema = z.object({
   base_url: BaseUrlSchema.optional(),
 });
 
-export function registerRegisterRoutes(app: FastifyInstance, deps: RegisterRouteDeps): void {
+export function registerRegisterRoutes(
+  app: FastifyInstance,
+  cfg: GatewayConfig,
+  deps: RegisterRouteDeps,
+): void {
   app.post("/v1/register", async (request, reply) => {
     const requestId = (request.headers["x-request-id"] as string) || randomUUID();
     reply.header("x-request-id", requestId);
@@ -35,7 +39,21 @@ export function registerRegisterRoutes(app: FastifyInstance, deps: RegisterRoute
     }
 
     const { name, provider, provider_key: providerKey } = parsed.data;
-    const baseUrl = parsed.data.base_url ?? null;
+    let baseUrl = parsed.data.base_url ?? null;
+    if (baseUrl !== null) {
+      // SSRF policy: validate/resolve BEFORE anything is persisted so a
+      // rejected URL cannot create a tenant/key/credential side effect.
+      const check = await validateProviderBaseUrl(baseUrl, {
+        policy: providerUrlPolicy(cfg.allowPrivateProviderUrls),
+      });
+      if (!check.ok) {
+        log({ request_id: requestId, status: 400, error_code: "invalid_request", base_url_rejected: true });
+        return reply.status(400).send({
+          error: { code: "invalid_request", message: `base_url: ${check.error}`, request_id: requestId },
+        });
+      }
+      // Keep the submitted (trimmed) form for API compatibility; validation\n      // above used the canonical URL/DNS result. `check.normalized` is available\n      // if we decide to persist canonical URLs in a future schema.\n      baseUrl = baseUrl.trim();
+    }
     const tenant = randomUUID();
 
     const saved = await deps.credentials.save(tenant, provider, providerKey, baseUrl);
@@ -55,7 +73,15 @@ export function registerRegisterRoutes(app: FastifyInstance, deps: RegisterRoute
     }
 
     const { key, record } = created.issued;
-    log({ request_id: requestId, status: 201, tenant_id: tenant, provider, key_prefix: record.keyPrefix, ...(baseUrl ? { base_url: baseUrl } : {}) });
+    log({
+      request_id: requestId,
+      status: 201,
+      tenant_id: tenant,
+      provider,
+      key_prefix: record.keyPrefix,
+      ...(baseUrl ? { base_url_host: new URL(baseUrl).host } : {}),
+    });
     return reply.status(201).send({ tenant_id: tenant, provider, key, key_prefix: record.keyPrefix });
   });
 }
+

@@ -102,7 +102,7 @@ describe("evidence card", () => {
     expect(screen.getByText(/stream:true bypasses the exact cache/)).toBeVisible();
   });
 
-  it("renders llm:exact:v1:<provider>:<hash> when the gateway sent a hash", () => {
+  it("renders llm:exact:v2:<tenant>:<provider>:<hash> when the gateway sent a hash", () => {
     const message = meta({ cacheHash: "deadbeef" });
     const evidence: Evidence = {
       requestId: "req-1",
@@ -116,6 +116,6 @@ describe("evidence card", () => {
     render(<Harness message={message} evidence={evidence} />);
     toggle();
 
-    expect(screen.getByText("llm:exact:v1:mock:deadbeef")).toBeVisible();
+    expect(screen.getByText("llm:exact:v2:<tenant>:mock:deadbeef")).toBeVisible();
   });
 });

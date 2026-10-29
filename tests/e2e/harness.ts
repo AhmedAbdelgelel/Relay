@@ -44,6 +44,10 @@ export const TEST_ENV: Record<string, string> = {
   ANTHROPIC_API_KEY: "",
   GEMINI_API_KEY: "",
   SAVED_USD_PER_1K_TOKENS: "0",
+  // Tests use loopback fake upstreams as tenant BYO URLs; the SSRF policy is
+  // deny-by-default, so the harness opts in explicitly. Production defaults to
+  // false (see ALLOW_PRIVATE_PROVIDER_URLS in .env.example).
+  ALLOW_PRIVATE_PROVIDER_URLS: "1",
 };
 
 export function withEnv<T>(patch: Record<string, string | undefined>, fn: () => T): T {
@@ -85,7 +89,7 @@ export interface BuiltApp {
 }
 
 export function makeApp(opts: AppOptions = {}): BuiltApp {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, bodyLimit: 512 * 1024 });
   const cfg = withEnv({ ...TEST_ENV, ...opts.env }, () => loadConfig());
   const provider = opts.provider ?? createProviderFromEnv(cfg);
   const providers = opts.providers;
@@ -100,7 +104,7 @@ export function makeApp(opts: AppOptions = {}): BuiltApp {
     credentials: new InMemoryCredentialStore(new CredentialCipher(cfg.credEncKey || "e2e-dev-secret")),
   };
   registerChatRoutes(app, provider, cfg, cache, { semanticStore, embedder, providers, auth });
-  registerRegisterRoutes(app, auth);
+  registerRegisterRoutes(app, cfg, auth);
   registerConnectionsRoutes(app, cfg, auth);
   registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers ?? new Map([[provider.name, provider]]));
@@ -317,3 +321,5 @@ export function sendJson(res: ServerResponse, status: number, obj: unknown): voi
   res.writeHead(status, { "content-type": "application/json" });
   res.end(body);
 }
+
+

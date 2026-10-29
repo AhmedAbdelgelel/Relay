@@ -43,7 +43,7 @@ describe("OpenAI-compatible adapter over the wire", () => {
       });
     });
     const { app } = openAiApp(upstream.url);
-    const res = await chat(app, lanes.laneFor("openai").key, ask("gpt-4o", "wire probe", { temperature: 0.3, max_tokens: 7 }));
+    const res = await chat(app, lanes.laneFor("openai").key, ask("gpt-4o", "wire probe", { temperature: 0.3, max_tokens: 7, top_p: 0.4, stop: ["END"] }));
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-provider"]).toBe("openai");
 
@@ -58,6 +58,8 @@ describe("OpenAI-compatible adapter over the wire", () => {
       temperature: 0.3,
       max_tokens: 7,
       stream: false,
+      top_p: 0.4,
+      stop: ["END"],
     });
 
     const body = json<{ id: string; model: string; choices: { message: { content: string } }[]; usage: { prompt_tokens: number; completion_tokens: number } }>(res);
@@ -69,7 +71,7 @@ describe("OpenAI-compatible adapter over the wire", () => {
     await app.close();
   });
 
-  it("absent max_tokens is omitted; absent usage stays absent (never invented)", async () => {
+  it("absent max_tokens/top_p/stop are omitted; absent usage stays absent (never invented)", async () => {
     const upstream = await startFakeUpstream((_hit, res) => {
       sendJson(res, 200, { id: "oai-2", model: "gpt-4o", choices: [{ message: { content: "no usage" } }] });
     });
@@ -77,7 +79,25 @@ describe("OpenAI-compatible adapter over the wire", () => {
     const res = await chat(app, lanes.laneFor("openai").key, ask("gpt-4o", "usage probe"));
     expect(res.statusCode).toBe(200);
     expect("max_tokens" in upstream.hits[0]!.body).toBe(false);
+    expect("top_p" in upstream.hits[0]!.body).toBe(false);
+    expect("stop" in upstream.hits[0]!.body).toBe(false);
     expect(json<{ usage?: unknown }>(res).usage).toBeUndefined();
+    await upstream.close();
+    await app.close();
+  });
+
+  it("streams forward top_p/stop in the request body too", async () => {
+    const upstream = await startFakeUpstream((_hit, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify({ id: "s-top-p", choices: [{ delta: { content: "ok" } }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+    const { app } = openAiApp(upstream.url);
+    const res = await chat(app, lanes.laneFor("openai").key, ask("gpt-4o", "stream sampling", { stream: true, top_p: 0.3, stop: "END" }));
+    expect(res.statusCode).toBe(200);
+    expect(upstream.hits[0]!.body["top_p"]).toBe(0.3);
+    expect(upstream.hits[0]!.body["stop"]).toBe("END");
     await upstream.close();
     await app.close();
   });
@@ -265,6 +285,32 @@ describe("Anthropic adapter over the wire", () => {
     const { app } = anthropicApp(upstream.url);
     await chat(app, lanes.laneFor("anthropic").key, ask("claude-3-5-sonnet", "max probe", { max_tokens: 7 }));
     expect(upstream.hits[0]!.body["max_tokens"]).toBe(7);
+    await upstream.close();
+    await app.close();
+  });
+
+  it("maps top_p and stop -> stop_sequences; absent fields add no keys", async () => {
+    const upstream = await startFakeUpstream((_hit, res) => {
+      sendJson(res, 200, { id: "ant-3", model: "claude-3-5-sonnet", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } });
+    });
+    const { app } = anthropicApp(upstream.url);
+    const lane = lanes.laneFor("anthropic").key;
+
+    // A bare-string stop is the same single-sequence request -> array form.
+    const strStop = await chat(app, lane, ask("claude-3-5-sonnet", "sampling probe", { top_p: 0.6, stop: "END" }));
+    expect(strStop.statusCode).toBe(200);
+    expect(upstream.hits[0]!.body["top_p"]).toBe(0.6);
+    expect(upstream.hits[0]!.body["stop_sequences"]).toEqual(["END"]);
+    expect("stop" in upstream.hits[0]!.body).toBe(false);
+
+    const listStop = await chat(app, lane, ask("claude-3-5-sonnet", "sampling probe list", { stop: ["A", "B"] }));
+    expect(listStop.statusCode).toBe(200);
+    expect(upstream.hits[1]!.body["stop_sequences"]).toEqual(["A", "B"]);
+
+    const plain = await chat(app, lane, ask("claude-3-5-sonnet", "sampling probe plain"));
+    expect(plain.statusCode).toBe(200);
+    expect("top_p" in upstream.hits[2]!.body).toBe(false);
+    expect("stop_sequences" in upstream.hits[2]!.body).toBe(false);
     await upstream.close();
     await app.close();
   });

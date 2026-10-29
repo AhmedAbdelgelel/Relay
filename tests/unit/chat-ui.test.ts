@@ -27,17 +27,25 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
 
 // The gateway hashes the canonical request on every validated call (D3), so the
 // mock has to do the same with the REAL gateway implementation — that is what
-// makes the browser/gateway parity assertion below meaningful.
+// makes the browser/gateway parity assertion below meaningful. The gateway now
+// also tenant-scopes the storage KEY (v2), but the hash this browser check pins
+// is tenant-independent, so an arbitrary tenant is enough here.
+const HASH_TENANT = "test";
+
 function hashHeaders(body: any): Record<string, string> {
   if (mode === "badhash") return { "x-cache-hash": "f".repeat(64) };
   try {
-    const { hash } = buildExactCacheKey("gemini", {
-      model: body.model,
-      messages: body.messages,
-      temperature: body.temperature ?? 1.0,
-      max_tokens: body.max_tokens,
-      stream: body.stream ?? false,
-    } as any);
+    const { hash } = buildExactCacheKey(
+      "gemini",
+      {
+        model: body.model,
+        messages: body.messages,
+        temperature: body.temperature ?? 1.0,
+        max_tokens: body.max_tokens,
+        stream: body.stream ?? false,
+      } as any,
+      HASH_TENANT,
+    );
     return { "x-cache-hash": hash };
   } catch {
     return {};
@@ -497,7 +505,7 @@ describe("metrics card (D4)", () => {
     const text = card.textContent || "";
     expect(text).toContain("MISS");
     expect(text).toContain("No entry for this key");
-    expect(text).toContain("llm:exact:v1:gemini:");
+    expect(text).toContain("llm:exact:v2:<tenant>:gemini:");
     expect(text).toContain("req-1"); // x-request-id
     expect(text).toContain("gemini · gemini-3.6-flash"); // provider + model
     expect(text).toContain("19 in · 52 out"); // provider usage, exact
@@ -516,13 +524,17 @@ describe("metrics card (D4)", () => {
     const card = openCard(last);
 
     // 1. canonical form rebuilt in the browser == gateway canonical string
-    const expected = buildExactCacheKey("gemini", {
-      model: lastBody.model,
-      messages: lastBody.messages,
-      temperature: lastBody.temperature,
-      max_tokens: lastBody.max_tokens,
-      stream: lastBody.stream,
-    } as any).canonical;
+    const expected = buildExactCacheKey(
+      "gemini",
+      {
+        model: lastBody.model,
+        messages: lastBody.messages,
+        temperature: lastBody.temperature,
+        max_tokens: lastBody.max_tokens,
+        stream: lastBody.stream,
+      } as any,
+      HASH_TENANT,
+    ).canonical;
     expect(card.querySelector("pre.canonical")!.textContent).toBe(expected);
     // whitespace rule: gateway trims content, so the raw payload padding is gone
     expect(expected).toContain('"content":"parity probe"');
@@ -697,3 +709,4 @@ describe("playground UX", () => {
     expect((document.querySelector("#composerHint") as HTMLElement).textContent).toContain("0 tokens");
   });
 });
+

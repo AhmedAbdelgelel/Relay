@@ -72,7 +72,7 @@ Assumption: **providerCallUsd = $0.0020 / call avoided** (aligns with the `SAVED
 - Next lower point 0.90: net -$0.4840 — 1 FP reuse (families: near-miss), 0 FN reuse (families: none).
 - Next higher point 0.95: net $0.0120 — 0 FP reuse (families: none), 1 FN reuse (families: paraphrase).
 
-`SEMANTIC_THRESHOLD` stays **0.92** — the current default; the sweep re-confirms it as the cost-aware optimum on this set. Any default change must link to this report (agent/review.md §5 gate).
+The production default is **0.95** — the real-embedding zero-false-positive boundary in `evaluation/real-embeddings-report.md`. This controlled sweep's cost-aware optimum on its prescribed cosines is **0.92**; it validates the policy math and is not evidence that the production default should be 0.92 (agent/review.md §5 gate).
 
 ## Notes
 

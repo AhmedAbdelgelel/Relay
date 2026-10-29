@@ -17,6 +17,10 @@ export interface ChatRequest {
   temperature: number;
   max_tokens?: number;
   stream: boolean;
+  /** Nucleus sampling probability mass (0..1]. Absent = provider default. */
+  top_p?: number;
+  /** Up to 4 stop sequences; a bare string and a 1-element array are equivalent. */
+  stop?: string | string[];
 }
 
 export interface ChatResponse {

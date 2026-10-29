@@ -298,7 +298,7 @@ async function startApp(opts: StartAppOptions): Promise<BenchApp> {
     credentials: new InMemoryCredentialStore(new CredentialCipher(cfg.credEncKey)),
   };
   registerChatRoutes(app, opts.provider, cfg, cache, { semanticStore, embedder: opts.embedder, providers, auth });
-  registerRegisterRoutes(app, auth);
+  registerRegisterRoutes(app, cfg, auth);
   registerConnectionsRoutes(app, cfg, auth);
   registerUsageRoutes(app, auth);
   registerProviderRoutes(app, cfg, providers);

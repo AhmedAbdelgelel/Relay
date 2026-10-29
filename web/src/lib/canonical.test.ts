@@ -19,21 +19,26 @@ import { canonicalizePayload, exactCacheKey, sha256Hex } from "@/lib/canonical";
 import type { ChatPayload } from "@/lib/types";
 
 const PROVIDER = "mock";
+const TENANT = "tenant-a";
 
 /** Assert app canonical/hash/key parity against the gateway for one payload. */
 async function assertParity(payload: ChatPayload): Promise<void> {
   // Gateway requests carry an explicit temperature; an absent field is 1.0 on
   // both sides (normalize.ts `?? 1.0`), which is exactly what this pins.
-  const gateway = buildExactCacheKey(PROVIDER, {
-    ...payload,
-    temperature: payload.temperature ?? 1.0,
-  });
+  const gateway = buildExactCacheKey(
+    PROVIDER,
+    {
+      ...payload,
+      temperature: payload.temperature ?? 1.0,
+    },
+    TENANT,
+  );
   const canonical = canonicalizePayload(payload);
 
   expect(canonical).toBe(gateway.canonical);
   expect(await sha256Hex(canonical)).toBe(gateway.hash);
-  expect(exactCacheKey(PROVIDER, gateway.hash)).toBe(gateway.key);
-  expect(gateway.key).toBe(`llm:exact:v1:${PROVIDER}:${gateway.hash}`);
+  expect(exactCacheKey(PROVIDER, gateway.hash, TENANT)).toBe(gateway.key);
+  expect(gateway.key).toBe(`llm:exact:v2:${TENANT}:${PROVIDER}:${gateway.hash}`);
 }
 
 const BASE: ChatPayload = {
@@ -153,7 +158,8 @@ describe("canonical parity with the gateway", () => {
 });
 
 describe("exactCacheKey", () => {
-  it("formats llm:exact:v1:<provider>:<hash>", () => {
-    expect(exactCacheKey("openai", "abc123")).toBe("llm:exact:v1:openai:abc123");
+  it("formats llm:exact:v2:<tenant>:<provider>:<hash>", () => {
+    expect(exactCacheKey("openai", "abc123")).toBe("llm:exact:v2:<tenant>:openai:abc123");
+    expect(exactCacheKey("openai", "abc123", "tenant-1")).toBe("llm:exact:v2:tenant-1:openai:abc123");
   });
 });

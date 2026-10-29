@@ -351,7 +351,7 @@ function buildMetricsCard(m) {
 
   const key = mrow("Cache key");
   if (m.hash) {
-    const full = "llm:exact:v1:" + (m.provider || "unknown") + ":" + m.hash;
+    const full = "llm:exact:v2:<tenant>:" + (m.provider || "unknown") + ":" + m.hash;
     key.value.textContent = full;
     const copyKey = document.createElement("button");
     copyKey.className = "card-copy";
@@ -1040,7 +1040,7 @@ function viewCache() {
     .map((x, i) => (i ? '<span class="arr">&rarr;</span>' : "") + '<span class="node">' + esc(x) + "</span>")
     .join("");
   const exactJson = {
-    key: "llm:exact:v1:<provider>:<sha256(canonical)>",
+    key: "llm:exact:v2:<tenant>:<provider>:<sha256(canonical)>",
     identity_fields: ["model", "messages", "temperature", "max_tokens"],
     normalization: "trim whitespace, sort keys, stable JSON",
     verdicts: ["HIT", "MISS", "BYPASS (stream:true)", "DISABLED"],
@@ -1375,3 +1375,4 @@ function init() {
 }
 
 init();
+

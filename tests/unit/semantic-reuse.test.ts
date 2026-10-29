@@ -83,6 +83,17 @@ describe("isReusableSemantic (Similarity != Equivalence != Reusability)", () => 
     expect(d.reusable).toBe(true);
   });
 
+  it("rejects requests that set top_p or stop: the store cannot prove those settings", () => {
+    for (const extra of [{ top_p: 0.5 }, { stop: "END" }, { stop: ["END"] }]) {
+      const d = isReusableSemantic(req(extra), hit({ similarity: 1 }), {
+        provider: "gemini",
+        threshold: 0.92,
+        tenant: "default",
+      });
+      expect(d).toEqual({ reusable: false, reason: "unsupported-sampling-field" });
+    }
+  });
+
   it("rejects below-threshold similarity", () => {
     const d = isReusableSemantic(req(), hit({ similarity: 0.91 }), {
       provider: "gemini",

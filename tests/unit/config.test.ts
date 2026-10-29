@@ -11,7 +11,7 @@ describe("numeric config parsing", () => {
     expect(cfg.port).toBe(3000);
     expect(cfg.upstreamTimeoutMs).toBe(25000);
     expect(cfg.cacheTtlSec).toBe(3600);
-    expect(cfg.semanticThreshold).toBe(0.92);
+    expect(cfg.semanticThreshold).toBe(0.95);
     expect(cfg.semanticTopK).toBe(3);
     expect(cfg.semanticTtlSec).toBe(3600);
     expect(cfg.savedUsdPer1kTokens).toBe(0);
@@ -30,7 +30,7 @@ describe("numeric config parsing", () => {
     expect(cfg.port).toBe(3000);
     expect(cfg.upstreamTimeoutMs).toBe(25000);
     expect(cfg.cacheTtlSec).toBe(3600);
-    expect(cfg.semanticThreshold).toBe(0.92);
+    expect(cfg.semanticThreshold).toBe(0.95);
     expect(cfg.semanticTopK).toBe(3);
     expect(cfg.semanticTtlSec).toBe(3600);
     expect(cfg.savedUsdPer1kTokens).toBe(0);
@@ -85,3 +85,4 @@ describe("numeric config parsing", () => {
     expect(load({ SAVED_USD_PER_1K_TOKENS: "0.25" }).savedUsdPer1kTokens).toBe(0.25);
   });
 });
+

@@ -8,7 +8,15 @@ export interface ReuseDecision {
   reason: string;
 }
 
-export const POLICY_VERSION = 1;
+/**
+ * Reuse-policy version, stamped on every semantic row.
+ *
+ * v2: exact/identity policy began covering `top_p`/`stop`. Rows admitted before
+ * this (v1) were created from requests whose unsupported fields were silently
+ * stripped by the old body schema, so their real generation settings are
+ * unknown; they must not be reused.
+ */
+export const POLICY_VERSION = 2;
 
 export function systemFingerprint(req: ChatRequest): string {
   const systems = req.messages
@@ -37,6 +45,15 @@ export function isReusableSemantic(
   const wantMax = req.max_tokens ?? undefined;
   if (candidate.maxTokens !== wantMax) {
     return { reusable: false, reason: "max-tokens-mismatch" };
+  }
+  // The semantic store records temperature/max_tokens/system prompt, but not
+  // sampling/shaping fields. A request that sets top_p or stop has no way to
+  // prove the stored row was generated with the same settings, so reuse is
+  // unsafe. chat.ts also skips semantic lookup/admission for these requests
+  // (defense in depth); the exact cache still covers them because it includes
+  // both fields in the canonical identity.
+  if (req.top_p !== undefined || req.stop !== undefined) {
+    return { reusable: false, reason: "unsupported-sampling-field" };
   }
   if (candidate.systemFingerprint != null && candidate.systemFingerprint !== systemFingerprint(req)) {
     return { reusable: false, reason: "system-fingerprint-mismatch" };
