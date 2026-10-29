@@ -31,10 +31,12 @@ Prefer HTTP-level tests for endpoint contracts and unit tests for pure logic.
 ## 3. Running
 
 ```bash
-npm test                     # hermetic: 23 files, 308 passed, 11 skipped
+npm test                     # hermetic: 29 files passed / 4 skipped; 371 passed, 11 skipped
 npm run typecheck
-npm run bench                # cache benchmark: 44/44 assertions
-npm run eval                 # deterministic threshold sweep
+npm run bench                # cache correctness benchmark: 44/44 assertions
+npm run bench:perf           # repeatable perf benchmark (100k requests; --quick)
+npm run eval                 # controlled threshold sweep
+npm run eval:real            # real ONNX-embedding evaluation + report
 cd web && npm run typecheck && npm run lint && npm test && npm run build
 ```
 

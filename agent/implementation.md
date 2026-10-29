@@ -40,9 +40,9 @@ request
   → lane guard (gateway key = registered | x-provider-key = anonymous | 401)
   → validation (400 before spend)
   → canonical request → sha256 → x-cache-hash
-  → L1 exact cache (memory LRU | Redis)
+  → L1 exact cache (tenant-scoped key; memory LRU | Redis)
   → L2 semantic lookup (embed → top-K → pure reuse policy)
-  → single-flight (key = exact key; waiter abort never kills shared work)
+  → single-flight (key = tenant-scoped exact key; waiter abort never kills shared work)
   → provider chain (retry/backoff, per-target circuit breaker, no fallback for
     provider-specific model ids)
   → normalize content
@@ -50,7 +50,9 @@ request
   → reply with evidence headers (or SSE frames when stream:true)
 ```
 
-Order is fixed: exact before semantic; streams bypass both caches.
+Order is fixed: exact before semantic; streams bypass both caches. The exact-cache
+storage key is `llm:exact:v2:<tenant>:<provider>:<sha256(canonical)>`; the tenant is
+derived from verified auth, never `x-tenant-id`.
 
 ## 3. Components (ports-and-adapters)
 
@@ -60,7 +62,7 @@ Order is fixed: exact before semantic; streams bypass both caches.
 | `src/providers/*` | `ProviderAdapter{name,configured,capabilities,chat,chatStream}`. Factories + `routeProviderName` (prefix routing) + capability gate. No cache/policy imports. |
 | `src/cache/*` | `CacheRepository{get,set,del,ping}` (memory/Redis); `SemanticCacheStore{findSimilar,save,recordHit}` (memory vector/pgvector); `SingleFlight`. Bounded memory caps: exact 1000, semantic 2000. |
 | `src/embeddings/*` | `EmbeddingProvider{name,dimension,embed}`; 768-d; providers: local ONNX (default), Gemini, Ollama, mock. Wrong dim/non-finite throws. |
-| `src/policy/reuse.ts` | Pure `isReusableSemantic(req, hit, {provider,threshold,tenant})`; checks provider, tenant, model, temperature, max_tokens, system fingerprint, policy version, threshold, empty content. |
+| `src/policy/reuse.ts` | Pure `isReusableSemantic(req, hit, {provider,threshold,tenant})`; checks provider, tenant, model, temperature, max_tokens, `top_p`/`stop` eligibility, system fingerprint, policy version, threshold, empty content. |
 | `src/routing/fallback.ts` | `buildChain`, `executeChain`, `TargetBreaker`; `buildChain` never duplicates a provider name. |
 | `src/auth/*` | Key/credential ports + memory/PG implementations; lane guard; SHA-256 hashed gateway keys; AES-256-GCM provider credentials. |
 | `src/domain/*` | Types, canonical key/hash, response normalization (markup stripped pre-admission; stream-safe hold-back). |
@@ -83,6 +85,16 @@ Order is fixed: exact before semantic; streams bypass both caches.
 - **INV-9** no lane → 401 no spend; registered key provider must match serving
   provider (unless the tenant connected its own credential); anonymous uses only
   the header key and always BYPASSes caches.
+- **INV-10** exact-cache reads/writes are tenant-scoped from verified auth; two
+  tenants never share an exact entry (same-tenant repeats still HIT).
+- **INV-11** the request schema is strict: only the documented field subset is
+  accepted; every unknown field → 400 before cache/provider work. Supported
+  generation fields are forwarded and included in exact-cache identity.
+- **INV-12** provider error text is truncated and known secrets are redacted before
+  a client-facing error body; logs carry no prompt text or key material.
+- **INV-13** tenant-supplied `base_url`s are validated with the SSRF policy
+  (deny private/loopback/link-local/metadata/reserved unless the explicit
+  `ALLOW_PRIVATE_PROVIDER_URLS` opt-in; redirects are not followed).
 
 ## 5. HTTP contract
 
@@ -90,7 +102,7 @@ All errors: `{ error: { code, message, request_id } }`, `x-request-id` echoed.
 
 | Method | Path | Auth | Request | Success | Errors |
 |---|---|---|---|---|---|
-| POST | `/v1/chat/completions` | Bearer `lg_…` / `x-api-key` or `x-provider-key` | `{model, messages[], temperature?=1, max_tokens?, stream?=false}` | `200` OpenAI shape + evidence headers; SSE when stream | `400` invalid/unsupported capability; `401` missing/bad key/provider key; `403` revoked/expired/provider mismatch; `429` rate limit; `502` provider; `503` auth store; `504` timeout |
+| POST | `/v1/chat/completions` | Bearer `lg_…` / `x-api-key` or `x-provider-key` | `{model, messages[], temperature?=1, max_tokens?, stream?=false, top_p?, stop?}`; unknown fields rejected | `200` OpenAI shape + evidence headers; SSE when stream | `400` invalid/unsupported field/capability; `401` missing/bad key/provider key; `403` revoked/expired/provider mismatch; `429` rate limit; `502` provider; `503` auth store; `504` timeout |
 | POST | `/v1/register` | open | `{name, provider, provider_key, base_url?}` | `201 {tenant_id, provider, key, key_prefix}` (key shown once) | `400` validation; `503` store |
 | GET | `/v1/usage` | registered | — | `200 {tenant, requests, exact_hits, semantic_hits, misses, coalesced, hit_rate, provider_calls_avoided, latency_ms_total, avg_latency_ms}` | `401`; `403` |
 | POST | `/v1/connections` | registered | `{provider, provider_key, base_url?}` | `201 {provider, base_url, endpoint, connected}` | `400`; `401`; `403`; `503` |
@@ -101,6 +113,11 @@ All errors: `{ error: { code, message, request_id } }`, `x-request-id` echoed.
 | GET | `/`, `/styles.css`, `/js/:name` | public | — | legacy playground statics | `403` traversal, `404` missing |
 
 Semantics:
+- Supported request surface: `model`, `messages`, `temperature`, `max_tokens`,
+  `stream`, `top_p`, `stop`; `.strict()` schema rejects everything else
+  (`tools`, `tool_choice`, `response_format`, penalties, `n`, `logprobs`, …) with a
+  named `400` before spend. `top_p`/`stop` are forwarded to adapters and included
+  in exact identity; semantic lookup/admission is skipped when either is set.
 - `x-cache`: `HIT | SEMANTIC_HIT | MISS | BYPASS | DISABLED`; stream always BYPASS.
 - Anonymous lane never reads/writes cache and has no tenant accounting.
 - Provider-specific model ids (`gpt-*`, `claude-*`, `gemini-*`, `llama*`,
@@ -109,12 +126,15 @@ Semantics:
 - No key anywhere for a configured routed provider → `401 provider_key_missing`.
 - Health/providers/metrics/usage/errors never contain key material.
 - `x-tenant-id` is ignored; tenant identity comes from the verified gateway key.
+- Request bodies are capped at 512 KiB (413 envelope); cache infra failures
+  degrade to MISS, never 5xx.
 
 ## 6. Storage / data
 
-- Exact cache: key `llm:exact:v1:<provider>:<sha256(canonical request)>`; memory
-  LRU or Redis; TTL `CACHE_TTL_S`; malformed/blank entries evicted on read.
-  Identity is provider+request (not tenant-scoped — documented product choice).
+- Exact cache: key `llm:exact:v2:<tenant>:<provider>:<sha256(canonical request)>`;
+  memory LRU or Redis; TTL `CACHE_TTL_S`; malformed/blank entries evicted on read.
+  Identity is tenant + provider + canonical request (verified tenant; no
+  cross-tenant sharing). `x-cache-hash` remains tenant-independent.
 - Semantic cache: memory vector store or pgvector. Table `semantic_cache` with
   `(tenant_id, provider, model, prompt_hash)` unique, embedding `vector(768)`,
   system_fingerprint, policy_version, expiry/hits. Runtime DDL lives in
@@ -128,6 +148,21 @@ Semantics:
 ## 7. Security (see SECURITY.md)
 
 Two lanes; no secrets in logs/health/metrics/usage; gateway keys hashed, provider
-keys AES-256-GCM encrypted; semantic reuse re-checks tenant; exact cache shared
-across tenants by design; open registration and BYO `base_url` are deliberate
-capabilities with known limitations (no rate limits, SSRF surface, UI unauthenticated).
+keys AES-256-GCM encrypted; exact-cache keys tenant-scoped and semantic reuse
+re-checks tenant; provider error messages truncated/redacted. BYO `base_url` is
+SSRF-checked (private/loopback/link-local/metadata/reserved rejected; explicit
+`ALLOW_PRIVATE_PROVIDER_URLS` opt-in; redirects not followed) with residual
+DNS-rebinding risk. Open registration and the anonymous lane remain deliberate
+capabilities with known limitations (no rate limits, UI unauthenticated).
+
+## 8. Semantic threshold + evaluation gate
+
+- Default `SEMANTIC_THRESHOLD=0.95`: the measured zero-false-positive boundary for
+  the built-in ONNX embedder on `evaluation/real-embeddings-report.md` (233 pairs).
+  At 0.92 that corpus produced 4 wrong-answer reuses (2.5% FPR); safe paraphrase
+  reuse needs a lexical/date/number guard or verifier. The controlled eval
+  (`evaluation/report.md`) optimum 0.92 validates policy math only.
+- Every output-affecting supported field must be in the exact-cache identity and
+  re-checked by policy before semantic reuse; fields the semantic store cannot
+  prove equivalent (`top_p`, `stop`) skip semantic lookup/admission.
+

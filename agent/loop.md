@@ -28,7 +28,7 @@ Legend: **API** is the HTTP surface the task adds/changes. Internal tasks say
 ### T1 — HTTP contract, validation, error mapping — completed
 **Goal:** reject bad input before spend; one error vocabulary.
 **Files:** `src/api/routes/chat.ts`, `src/domain/types.ts`, `src/infrastructure/errors.ts`.
-**API:** `POST /v1/chat/completions` — auth: registered `Bearer lg_…`/`x-api-key` or anonymous `x-provider-key`; body `{model, messages[], temperature?=1, max_tokens?, stream?=false}`; success `200` OpenAI shape + evidence headers; errors `400` invalid, `401` no/bad key, `403` revoked/expired/provider mismatch, `429` upstream rate limit, `502` provider, `503` auth store, `504` timeout.
+**API:** `POST /v1/chat/completions` — auth: registered `Bearer lg_…`/`x-api-key` or anonymous `x-provider-key`; body `{model, messages[], temperature?=1, max_tokens?, stream?=false, top_p?, stop?}` (strict schema: unknown fields → named 400; 512 KiB body cap); success `200` OpenAI shape + evidence headers; errors `400` invalid/unsupported field/capability, `401` no/bad key, `403` revoked/expired/provider mismatch, `429` upstream rate limit, `502` provider, `503` auth store, `504` timeout, `413` oversize.
 **Acceptance:** invalid body → 400, provider/cache untouched; valid → provider response + `x-request-id`; errors never leak upstream internals.
 
 ### T2 — ProviderAdapter + factories — completed
@@ -94,7 +94,7 @@ Legend: **API** is the HTTP surface the task adds/changes. Internal tasks say
 
 ### T15 — Eval harness + cost metrics — completed
 **Goal:** threshold decided by data; savings visible.
-**Files:** `scripts/eval/*`, `evaluation/report.md`, `src/observability/metrics.ts`. **API:** `/metrics` adds similarity histogram, tokens, `estimated_cost_saved`; no new routes. **Acceptance:** labeled dataset sweep, deterministic report, 0.92 optimum; harness hermetic.
+**Files:** `scripts/eval/*`, `evaluation/report.md`, `evaluation/real-embeddings-report.md`, `src/observability/metrics.ts`. **API:** `/metrics` adds similarity histogram, tokens, `estimated_cost_saved`; no new routes. **Acceptance:** controlled dataset sweep + real-embedding sweep (`npm run eval:real`), deterministic reports; production default 0.95 justified by real-embedding zero-FP boundary; controlled 0.92 optimum is policy-math only.
 
 ### T16 — Policy depth (tenant/fingerprint/version) — completed
 **Goal:** reuse safety independent of store filters.
@@ -159,16 +159,40 @@ History only; implementation tracked in T23–T27.
 **Files:** `docker-compose.yml`, `scripts/bench/cache.ts`, `package.json` (`npm run bench`). **API:** none (compose exposes gateway `:3000`, web `:3001`; benchmark drives the real app locally).
 **Acceptance:** `docker compose up --build` starts gateway+web+Redis; `npm run bench` prints table + `BENCH_JSON` (44/44 assertions) with no external network; README numbers reproducible.
 
+### Hardening pass (2026-10-29) — completed
+
+**T31 — tenant-scoped exact cache.** Key `llm:exact:v2:<tenant>:<provider>:<hash>` from verified auth; fallback lookups/writes use same tenant. **API:** chat only; `x-cache-hash` unchanged. Tests: `tests/e2e/tenant-cache-isolation.e2e.test.ts` (A MISS, B MISS, B HIT, same-tenant HIT).
+
+**T32 — explicit request schema.** Supported fields only (`model`, `messages`, `temperature`, `max_tokens`, `stream`, `top_p`, `stop`); `.strict()` → named 400 for unknown fields before spend; adapters forward supported fields (Anthropic `stop_sequences`). **API:** `POST /v1/chat/completions` `400 invalid_request`; tests `tests/e2e/request-schema.e2e.test.ts`.
+
+**T33 — cache-identity audit.** Canonical identity includes model/messages/temperature/max_tokens/`top_p`/`stop`; equivalent requests share hash, different settings cannot collide. Semantic store cannot verify `top_p`/`stop`, so semantic lookup/admission is skipped for those requests; `POLICY_VERSION=2`. **API:** none.
+
+**T34 — benchmark command verification.** `npm run bench` already existed; reproducible from clean checkout (44/44 checks, ~11.5 s). No defect; docs updated.
+
+**T35 — repeatable perf benchmark.** `scripts/bench/perf.ts` / `npm run bench:perf`: 6 scenarios × 5 repeats × concurrency 1/10/50/100, 1,000 requests/scenario, warm-up, P50/P95/P99/throughput/errors/RSS/heap, environment, `BENCH_JSON`; mock-provider labeled. **API:** none.
+
+**T36 — failure/stress tests.** `tests/e2e/resilience.e2e.test.ts` (17 tests): pgvector/Redis outages, timeout/refused, malformed JSON/SSE, 256 KB vs >1 MB bodies, aborts/cleanup, retry storms/breaker, stampede. **API:** none.
+
+**T37 — real-embedding semantic eval.** `scripts/eval/realEmbeddings.ts` / `npm run eval:real`: 233 labelled pairs × 12 thresholds through real ONNX embedder + store + policy; zero-FP boundary 0.95, 4 FPs at 0.92; false-positive gallery + per-family metrics. **API:** none.
+
+**T38 — economics/admission policy.** Report adds provider/embedding/storage/net-savings assumptions and explicit admission rules (non-empty normalized success only; no reuse below threshold; no semantic reuse with unverifiable sampling fields). **API:** none.
+
+**T39 — README evidence/trade-offs.** Architecture + request flow, exact-before-semantic rationale, Redis/Postgres roles, API subset, test/bench methodology, measured vs design claims, known limits. **API:** documentation.
+
+**T40 — production-readiness/SSRF/secrets.** SSRF-hardened `base_url` validation (private/loopback/link-local/metadata/reserved/DNS; `ALLOW_PRIVATE_PROVIDER_URLS` opt-in; redirects blocked); provider-error redaction; 512 KiB body cap; secret-redaction and auth coverage tests. **API:** `POST /v1/register`, `POST/GET /v1/connections` `400` for rejected `base_url`; tests `base-url-security` + `secret-redaction`.
+
 ## Runbook
 
 ```bash
 npm install
 npm run dev            # gateway http://localhost:3000 (mock provider)
 npm run build && npm start
-npm test               # hermetic: 23 files, 308 passed, 11 skipped
+npm test               # hermetic: 29 files passed, 4 skipped; 371 passed, 11 skipped
 npm run typecheck
-npm run eval           # deterministic threshold sweep -> evaluation/report.md
-npm run bench          # hermetic cache benchmark (mock provider + local ONNX)
+npm run eval           # controlled-cosine threshold sweep -> evaluation/report.md
+npm run eval:real      # real ONNX-embedding eval -> evaluation/real-embeddings-report.md
+npm run bench          # cache-correctness benchmark (44/44 assertions)
+npm run bench:perf     # repeatable perf benchmark (100k requests; --quick smoke)
 
 cd web && npm install
 npm run dev            # UI http://localhost:3001 (gateway must be running)
@@ -196,6 +220,8 @@ Providers: `GEMINI_*`, `OPENAI_*`, `ANTHROPIC_*`, `OLLAMA_*`,
 `OPEN_ROUTER_KEY`, `OPENROUTER_MODEL` (default `cohere/north-mini-code:free`),
 `OPENROUTER_BASE_URL`.
 Auth/storage: `GATEWAY_API_KEYS`, `CRED_ENC_KEY`, `DATABASE_URL`.
+SSRF: `ALLOW_PRIVATE_PROVIDER_URLS` (default false; explicit opt-in for trusted
+self-hosted provider URLs).
 Reporting: `SAVED_USD_PER_1K_TOKENS`.
 
 ### Metrics keys
@@ -213,10 +239,10 @@ Derived: `semantic_lookups`, `avg_semantic_score`, `cache_lookups`,
 
 ### Tests + live spend
 
-`npm test` is hermetic; live suites are opt-in: `OPENROUTER_LIVE_TEST=1` +
-`OPEN_ROUTER_KEY` (free `:free` models, `npm run test:live`),
-`GEMINI_LIVE_TEST=1`, `EMBEDDING_LIVE_TEST=1`, `REDIS_LIVE_TEST=1`. A key in
-`.env` alone never triggers live calls.
+`npm test` is hermetic (29 files passed / 4 skipped; 371 passed / 11 skipped);
+live suites are opt-in: `OPENROUTER_LIVE_TEST=1` + `OPEN_ROUTER_KEY` (free `:free`
+models, `npm run test:live`), `GEMINI_LIVE_TEST=1`, `EMBEDDING_LIVE_TEST=1`,
+`REDIS_LIVE_TEST=1`. A key in `.env` alone never triggers live calls.
 
 ### Health triage
 

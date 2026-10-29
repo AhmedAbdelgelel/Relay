@@ -62,7 +62,7 @@ fall back to the playground. Frozen nav order: overview, playground, requests, c
 - Keyboard: Enter/Cmd/Ctrl+Enter send · Shift+Enter newline · Esc stop.
 - Thread: greeting "Connected through your gateway…" + 3 suggestion chips; user rows;
   assistant rows with collapsible metrics line + metrics **card** (Cache badge+hint,
-  cache key `llm:exact:v1:<provider>:<hash>` + copy, canonical preview + browser sha256
+  cache key `llm:exact:v2:<tenant>:<provider>:<hash>` + copy, canonical preview + browser sha256
   verify (ok/bad/idle), latency (browser + gateway), TTFT (stream), tokens (≈ estimated
   when no usage), speed tok/s, stream chunks, provider·model, request id + time).
   Copy / Regenerate tools. Error rows (429 → Quota card with Retry), amber empty-response notices.
@@ -110,7 +110,7 @@ fall back to the playground. Frozen nav order: overview, playground, requests, c
   `#statBypassed/#statReused/#statSaved/#statChunks/#statTtft`, `#chatStack .chat-item/.title/.chat-del`,
   `#newChatBtn`, `#menuBtn` → body.collapsed, `#statusDot.on`, `.provider-pill`.
 - `tests/integration/ui-live.test.ts` (4): real server; seeded `llm-gateway-api-v1`;
-  MISS→HIT with exact card texts (`"No entry for this key"`, `llm:exact:v1:mock:`,
+  MISS→HIT with exact card texts (`"No entry for this key"`, `llm:exact:v2:<tenant>:mock:`,
   `.verify.ok "matches x-cache-hash"`, `.badge.hit` "provider was NOT called", reused +15,
   `#statSaved === #statHits`); stream BYPASS card texts; chat persistence across switch.
 - `tests/integration/playground-send.test.ts` (4): boot via hash; send & card open;
@@ -148,3 +148,5 @@ fall back to the playground. Frozen nav order: overview, playground, requests, c
 
 The redesigned app should fix these where the new architecture makes it natural — without
 breaking the legacy contract above (legacy stays as-is; fixes land in the new app).
+
+

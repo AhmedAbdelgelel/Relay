@@ -158,7 +158,7 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
 - Lighthouse (harness browser): accessibility 100 · best-practices 100 · SEO 100 on `/` in both
   themes; the same bar passed on `/playground` in light before the usage panel landed.
 - Live browser pass over all five routes: try-out lane send with no key (BYPASS + hint copy),
-  registered key MISS → HIT with the `llm:exact:v1:mock:…` key and the "browser sha256 matches
+  registered key MISS → HIT with the `llm:exact:v2:<tenant>:mock:…` key and the "browser sha256 matches
   x-cache-hash" chip, cache page numbers equal `/metrics` (33.33% = 3 hit / 6 miss), providers
   line equals the raw `/providers` payload (3/6 configured, mock active default), theme flip
   instant + persisted across reload, error rows carry request id + status.
@@ -182,3 +182,4 @@ text `#e7e9ec` / `rgba(255,255,255,.6)`, primary button inverted (white bg, blac
   synthetic-Escape check (the harness cannot size a viewport or screenshot, so pixel review
   remains manual).
 - The legacy UI (`public/`) and its root test contracts are untouched.
+
