@@ -228,7 +228,7 @@ Reporting: `SAVED_USD_PER_1K_TOKENS`.
 
 Counters: `requests_total`, `exact_hits`, `exact_misses`,
 `singleflight_leaders`, `singleflight_coalesced`, `provider_requests`,
-`provider_errors`, `cache_lookup_failed`, `cache_write_failed`, `semantic_hits`,
+`provider_errors`, `provider_timeouts`, `cache_lookup_failed`, `cache_write_failed`, `semantic_hits`,
 `semantic_misses`, `semantic_errors`, `fallback_count`, `breaker_open`,
 `tokens_in`, `tokens_out`, `estimated_cost_saved`, `semantic_hist_*`,
 `auth_rejects_total`.
@@ -252,3 +252,4 @@ BYPASS, no accounting. Cache/Redis/pgvector down → MISS + failure counters, ne
 5xx. Provider errors → 429/502/504 per mapping. Config typos fail boot.
 Provider-specific model ids retry/fail within their provider (no cross-vendor
 failover). See `SECURITY.md` for the threat model and limits.
+

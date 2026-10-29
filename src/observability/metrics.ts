@@ -7,6 +7,7 @@ export interface MetricsSnapshot {
   singleflight_leaders: number;
   provider_requests: number;
   provider_errors: number;
+  provider_timeouts: number;
   cache_lookup_failed: number;
   cache_write_failed: number;
   semantic_hits: number;
@@ -63,6 +64,7 @@ export type CounterName =
   | "singleflight_leaders"
   | "provider_requests"
   | "provider_errors"
+  | "provider_timeouts"
   | "cache_lookup_failed"
   | "cache_write_failed"
   | "semantic_hits"
@@ -88,6 +90,7 @@ export class GatewayMetrics {
     singleflight_leaders: 0,
     provider_requests: 0,
     provider_errors: 0,
+    provider_timeouts: 0,
     cache_lookup_failed: 0,
     cache_write_failed: 0,
     semantic_hits: 0,
@@ -229,3 +232,4 @@ export class GatewayMetrics {
 }
 
 export const metrics = new GatewayMetrics();
+

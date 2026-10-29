@@ -569,6 +569,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
     } catch (err) {
       const gw = err instanceof GatewayError ? err : toGatewayError(serving.name, err);
       const safeMessage = redactSecrets(gw.message, errorSecrets);
+      if (gw.status === 504) metrics.inc("provider_timeouts");
       if (req.stream) metrics.inc("provider_errors");
       log({ request_id: requestId, provider: serving.name, status: gw.status, latency_ms: Date.now() - start, stream: req.stream, error_code: gw.code });
       if (reply.raw.headersSent) {
@@ -647,3 +648,4 @@ function awaitShared<T>(shared: Promise<T>, signal: AbortSignal): Promise<T> {
     );
   });
 }
+

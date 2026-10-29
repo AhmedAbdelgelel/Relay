@@ -66,7 +66,7 @@ describe("health / providers / metrics", () => {
     const res = await app.inject({ method: "GET", url: "/metrics" });
     expect(res.statusCode).toBe(200);
     const body = json<Record<string, unknown>>(res);
-    for (const key of ["requests_total", "exact_hits", "exact_misses", "semantic_hits", "semantic_misses", "provider_requests", "hit_rate", "provider_calls_avoided", "semantic_lookups", "avg_semantic_score", "tokens_in", "tokens_out", "singleflight_leaders", "singleflight_coalesced", "auth_rejects_total", "fallback_count", "breaker_open"]) {
+    for (const key of ["requests_total", "exact_hits", "exact_misses", "semantic_hits", "semantic_misses", "provider_requests", "hit_rate", "provider_calls_avoided", "semantic_lookups", "avg_semantic_score", "tokens_in", "tokens_out", "singleflight_leaders", "singleflight_coalesced", "auth_rejects_total", "fallback_count", "breaker_open", "provider_timeouts"]) {
       expect(key in body).toBe(true);
     }
     expect(body["requests_total"]).toBe(2);
@@ -379,4 +379,5 @@ describe("real socket run", () => {
     await app.close();
   });
 });
+
 
