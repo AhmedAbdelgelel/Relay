@@ -187,7 +187,7 @@ History only; implementation tracked in T23–T27.
 npm install
 npm run dev            # gateway http://localhost:3000 (mock provider)
 npm run build && npm start
-npm test               # hermetic: 29 files passed, 4 skipped; 371 passed, 11 skipped
+npm test               # hermetic: 29 files passed, 4 skipped; 374 passed, 11 skipped
 npm run typecheck
 npm run eval           # controlled-cosine threshold sweep -> evaluation/report.md
 npm run eval:real      # real ONNX-embedding eval -> evaluation/real-embeddings-report.md
@@ -210,8 +210,10 @@ docker compose up --build   # gateway :3000 + web :3001 + Redis
 
 ### Env (all parsed in `src/infrastructure/config.ts`; defaults in `.env.example`)
 
-Core: `PORT`, `PROVIDER` (`mock|gemini|ollama|openai|anthropic|openrouter`),
+Core: `PORT`, `PROVIDER` (`mock|gemini|ollama|openai|anthropic|openrouter|opencode`),
 `UPSTREAM_TIMEOUT_MS`.
+Providers: OpenCode Go uses `OPENCODE_API_KEY`, `OPENCODE_BASE_URL`,
+`OPENCODE_MODEL` (default `deepseek-v4.1-flash`).
 Caches: `CACHE_ENABLED`, `CACHE_TTL_S`, `REDIS_URL`; `SEMANTIC_ENABLED`,
 `SEMANTIC_STORE` (`memory|pgvector`), `SEMANTIC_THRESHOLD`, `SEMANTIC_TOP_K`,
 `SEMANTIC_TTL_S`, `EMBEDDING_PROVIDER` (`mock|gemini|ollama|local`),
@@ -239,7 +241,7 @@ Derived: `semantic_lookups`, `avg_semantic_score`, `cache_lookups`,
 
 ### Tests + live spend
 
-`npm test` is hermetic (29 files passed / 4 skipped; 371 passed / 11 skipped);
+`npm test` is hermetic (29 files passed / 4 skipped; 374 passed / 11 skipped);
 live suites are opt-in: `OPENROUTER_LIVE_TEST=1` + `OPEN_ROUTER_KEY` (free `:free`
 models, `npm run test:live`), `GEMINI_LIVE_TEST=1`, `EMBEDDING_LIVE_TEST=1`,
 `REDIS_LIVE_TEST=1`. A key in `.env` alone never triggers live calls.
@@ -252,4 +254,5 @@ BYPASS, no accounting. Cache/Redis/pgvector down → MISS + failure counters, ne
 5xx. Provider errors → 429/502/504 per mapping. Config typos fail boot.
 Provider-specific model ids retry/fail within their provider (no cross-vendor
 failover). See `SECURITY.md` for the threat model and limits.
+
 

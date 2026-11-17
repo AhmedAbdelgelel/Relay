@@ -31,7 +31,7 @@ Prefer HTTP-level tests for endpoint contracts and unit tests for pure logic.
 ## 3. Running
 
 ```bash
-npm test                     # hermetic: 29 files passed / 4 skipped; 371 passed, 11 skipped
+npm test                     # hermetic: 29 files passed / 4 skipped; 374 passed, 11 skipped
 npm run typecheck
 npm run bench                # cache correctness benchmark: 44/44 assertions
 npm run bench:perf           # repeatable perf benchmark (100k requests; --quick)
@@ -67,3 +67,4 @@ Required fixes:
 ```
 
 Never report PASS while a required test is failing.
+

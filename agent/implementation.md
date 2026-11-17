@@ -59,7 +59,7 @@ derived from verified auth, never `x-tenant-id`.
 | Component | Responsibility / interface |
 |---|---|
 | `src/api/routes/chat.ts` | HTTP only: validate, lane guard, orchestrate pipeline, headers, SSE, error map. Dependencies injected (`providers`, `cache`, `semanticStore`, `embedder`, `auth`). |
-| `src/providers/*` | `ProviderAdapter{name,configured,capabilities,chat,chatStream}`. Factories + `routeProviderName` (prefix routing) + capability gate. No cache/policy imports. |
+| `src/providers/*` | `ProviderAdapter{name,configured,capabilities,chat,chatStream}`. Factories + `routeProviderName` (prefix routing) + capability gate; OpenAI-compatible adapters include OpenCode Go DeepSeek. No cache/policy imports. |
 | `src/cache/*` | `CacheRepository{get,set,del,ping}` (memory/Redis); `SemanticCacheStore{findSimilar,save,recordHit}` (memory vector/pgvector); `SingleFlight`. Bounded memory caps: exact 1000, semantic 2000. |
 | `src/embeddings/*` | `EmbeddingProvider{name,dimension,embed}`; 768-d; providers: local ONNX (default), Gemini, Ollama, mock. Wrong dim/non-finite throws. |
 | `src/policy/reuse.ts` | Pure `isReusableSemantic(req, hit, {provider,threshold,tenant})`; checks provider, tenant, model, temperature, max_tokens, `top_p`/`stop` eligibility, system fingerprint, policy version, threshold, empty content. |
