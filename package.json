@@ -13,7 +13,8 @@
     "eval": "tsx scripts/eval/run.ts",
     "eval:real": "tsx scripts/eval/realEmbeddings.ts",
     "bench": "tsx scripts/bench/cache.ts",
-    "bench:perf": "tsx scripts/bench/perf.ts"
+    "bench:perf": "tsx scripts/bench/perf.ts",
+    "bench:large-context": "tsx scripts/bench/large-context.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",

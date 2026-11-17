@@ -8,6 +8,8 @@ export interface OpenAICompatibleOpts {
   baseURL: string;
   apiKey: string;
   defaultModel: string;
+  /** Extra request headers merged before auth (e.g. OpenCode's User-Agent). */
+  extraHeaders?: Record<string, string>;
 }
 
 interface OpenAIChatJson {
@@ -45,6 +47,7 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
   private baseURL: string;
   private apiKey: string;
   private defaultModel: string;
+  private extraHeaders: Record<string, string>;
 
   constructor(opts: OpenAICompatibleOpts) {
     this.name = opts.name;
@@ -52,10 +55,11 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
     this.apiKey = opts.apiKey;
     this.configured = opts.apiKey !== "";
     this.defaultModel = opts.defaultModel;
+    this.extraHeaders = opts.extraHeaders ?? {};
   }
 
   private headers(): Record<string, string> {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
+    const h: Record<string, string> = { ...this.extraHeaders, "Content-Type": "application/json" };
     if (this.apiKey) h["Authorization"] = `Bearer ${this.apiKey}`;
     return h;
   }

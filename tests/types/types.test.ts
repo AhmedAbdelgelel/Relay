@@ -97,8 +97,8 @@ describe("domain types", () => {
 });
 
 describe("config types", () => {
-  it("ProviderName is mock|gemini|ollama|openai|anthropic|openrouter", () => {
-    expectTypeOf<ProviderName>().toEqualTypeOf<"mock" | "gemini" | "ollama" | "openai" | "anthropic" | "openrouter">();
+  it("ProviderName is mock|gemini|ollama|openai|anthropic|openrouter|opencode", () => {
+    expectTypeOf<ProviderName>().toEqualTypeOf<"mock" | "gemini" | "ollama" | "openai" | "anthropic" | "openrouter" | "opencode">();
   });
 
   it("GatewayConfig has all required fields with correct types", () => {
@@ -159,6 +159,7 @@ describe("provider types", () => {
       baseURL: string;
       apiKey: string;
       defaultModel: string;
+      extraHeaders?: Record<string, string>;
     }>();
     const p: ProviderAdapter = new OpenAICompatibleProvider({
       name: "gemini",

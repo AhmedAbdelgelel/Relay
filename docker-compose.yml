@@ -6,12 +6,12 @@
 #
 # No .env is required: the stack starts on the mock provider (zero keys). Put the
 # usual variables in a local .env to route to a real provider, for example:
-#   PROVIDER=openrouter
-#   OPEN_ROUTER_KEY=sk-or-v1-…
-#   OPENROUTER_MODEL=cohere/north-mini-code:free
-#   GATEWAY_API_KEYS=dev:openrouter:dev:lg_dev_only_key
-# See .env.example for every variable. The gateway image bakes the local ONNX
-# embedder, so semantic caching works offline (no embedding service needed).
+#   PROVIDER=opencode
+#   OPENCODE_API_KEY=oc_…
+#   OPENCODE_MODEL=deepseek-v4.1-flash
+#   GATEWAY_API_KEYS=dev:opencode:dev:lg_dev_only_key
+# See .env.example for every variable; semantic caching works with the configured
+# embedder (no external embedding service needed).
 
 services:
   gateway:
@@ -30,6 +30,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      OPENCODE_BASE_URL: ${OPENCODE_BASE_URL:-https://opencode.ai/inference/go/openai/v1}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-deepseek-v4.1-flash}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       # Caching.
       CACHE_ENABLED: "true"
@@ -37,7 +40,7 @@ services:
       REDIS_URL: "redis://redis:6379"
       SEMANTIC_ENABLED: "true"
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
-      SEMANTIC_THRESHOLD: ${SEMANTIC_THRESHOLD:-0.83}
+      SEMANTIC_THRESHOLD: ${SEMANTIC_THRESHOLD:-0.95}
       SEMANTIC_TOP_K: ${SEMANTIC_TOP_K:-3}
       SEMANTIC_TTL_S: ${SEMANTIC_TTL_S:-3600}
       SEMANTIC_STORE: memory

@@ -53,6 +53,12 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
       "recursive/flint-v1.0:free",
     ],
   },
+  opencode: {
+    label: "OpenCode Go",
+    adapter: "OpenAI-compatible Adapter",
+    endpoint: "https://opencode.ai/inference/go/openai/v1",
+    models: ["deepseek-v4.1-flash", "deepseek-v4-pro"],
+  },
   custom: {
     label: "Custom",
     adapter: "OpenAI-compatible Adapter",
@@ -75,6 +81,7 @@ export const PROVIDER_ORDER = [
   "openai",
   "anthropic",
   "openrouter",
+  "opencode",
   "custom",
 ] as const;
 
@@ -95,6 +102,7 @@ export function providerForModel(model: string, fallback = "google"): string {
   if (m.startsWith("gemini-")) return "google";
   if (m.startsWith("llama") || m.startsWith("nomic")) return "custom";
   if (m.startsWith("openrouter/") || m.endsWith(":free")) return "openrouter";
+  if (m.startsWith("deepseek-") || m.startsWith("opencode/")) return "opencode";
   return fallback;
 }
 
@@ -108,6 +116,7 @@ export function catalogProviderId(providerId: string | null | undefined): string
     case "openai":
     case "anthropic":
     case "openrouter":
+    case "opencode":
     case "mock":
       return providerId;
     default:

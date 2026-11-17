@@ -55,6 +55,7 @@ describe("health / providers / metrics", () => {
     expect(byId.get("gemini")!.configured).toBe(false);
         expect(byId.get("ollama")!.configured).toBe(false);
     expect(byId.get("openrouter")!.configured).toBe(false);
+    expect(byId.get("opencode")!.configured).toBe(false);
     expect(res.body).not.toContain("sk-live-secret");
     await app.close();
   });

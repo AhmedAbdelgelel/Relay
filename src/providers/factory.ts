@@ -5,6 +5,25 @@ import { MockProvider } from "./MockProvider.js";
 import { OpenAICompatibleProvider } from "./OpenAICompatibleProvider.js";
 import type { ProviderAdapter } from "./ProviderAdapter.js";
 
+const OPENCODE_BASE_URL = "https://opencode.ai/inference/go/openai/v1";
+const OPENCODE_MODEL = "deepseek-v4.1-flash";
+const OPENCODE_HEADERS = {
+  "User-Agent": "relay-gateway/0.1",
+  // OpenCode Go requires a stable session id for routing. Relay has no
+  // conversation abstraction, so one gateway process uses one session.
+  "x-opencode-session": "relay-gateway",
+};
+
+function openCodeAdapter(cfg: GatewayConfig, apiKey: string, baseURL?: string | null): ProviderAdapter {
+  return new OpenAICompatibleProvider({
+    name: "opencode",
+    baseURL: baseURL && baseURL.trim() !== "" ? baseURL.trim() : cfg.openCodeBaseUrl || OPENCODE_BASE_URL,
+    apiKey,
+    defaultModel: cfg.openCodeModel || OPENCODE_MODEL,
+    extraHeaders: OPENCODE_HEADERS,
+  });
+}
+
 export function createProviderFromEnv(cfg: GatewayConfig, mockOverrides?: { delayMs?: number }): ProviderAdapter {
   switch (cfg.provider) {
     case "mock":
@@ -51,6 +70,8 @@ export function createProviderFromEnv(cfg: GatewayConfig, mockOverrides?: { dela
         defaultModel: cfg.openRouterModel,
       });
     }
+    case "opencode":
+      return openCodeAdapter(cfg, cfg.openCodeApiKey ?? "");
   }
 }
 
@@ -107,6 +128,9 @@ export function createProvidersFromEnv(cfg: GatewayConfig): Map<string, Provider
       defaultModel: cfg.openRouterModel,
     }));
   }
+  // OpenCode Go (paid DeepSeek models by default) needs an API key; without
+  // one it stays an unconfigured provider option that tenants can connect.
+  if (cfg.openCodeApiKey) map.set("opencode", openCodeAdapter(cfg, cfg.openCodeApiKey));
   return map;
 }
 
@@ -123,6 +147,8 @@ export function routeProviderName(model: string): string | null {
   if (m.startsWith("gemini-")) return "gemini";
   if (m.startsWith("llama") || m.startsWith("nomic")) return "ollama";
   if (m.startsWith("openrouter/") || m.endsWith(":free")) return "openrouter";
+  // OpenCode Go model ids (e.g. deepseek-v4.1-flash) route to OpenCode.
+  if (m.startsWith("deepseek-") || m.startsWith("opencode/")) return "opencode";
   return null;
 }
 
@@ -136,7 +162,7 @@ export function providerForModel(
 }
 
 /** Providers whose upstream rejects unauthenticated calls. */
-const AUTH_PROVIDERS = new Set(["openai", "anthropic", "gemini", "openrouter"]);
+const AUTH_PROVIDERS = new Set(["openai", "anthropic", "gemini", "openrouter", "opencode"]);
 
 export function providerRequiresKey(name: string): boolean {
   return AUTH_PROVIDERS.has(name);
@@ -155,6 +181,8 @@ export function defaultEndpointFor(name: string, cfg: GatewayConfig): string {
       return cfg.ollamaBaseUrl;
     case "openrouter":
       return cfg.openRouterBaseUrl;
+    case "opencode":
+      return cfg.openCodeBaseUrl || OPENCODE_BASE_URL;
     case "mock":
       return "in-process";
     default:
@@ -182,6 +210,8 @@ export function providerWithKey(
       return new AnthropicAdapter({ name, baseURL: url(cfg.anthropicBaseUrl), apiKey, defaultModel: cfg.anthropicModel });
     case "openrouter":
       return new OpenAICompatibleProvider({ name, baseURL: url(cfg.openRouterBaseUrl), apiKey, defaultModel: cfg.openRouterModel });
+    case "opencode":
+      return openCodeAdapter(cfg, apiKey, baseUrl);
     default:
       throw new Error(`providerWithKey: unknown provider "${name}"`);
   }

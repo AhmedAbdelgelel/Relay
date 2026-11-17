@@ -1,5 +1,5 @@
 
-export const PROVIDER_NAMES = ["mock", "gemini", "ollama", "openai", "anthropic", "openrouter"] as const;
+export const PROVIDER_NAMES = ["mock", "gemini", "ollama", "openai", "anthropic", "openrouter", "opencode"] as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
@@ -32,6 +32,14 @@ export interface GatewayConfig {
   openRouterKey: string;
   openRouterBaseUrl: string;
   openRouterModel: string;
+  /**
+   * OpenCode Go (OpenAI-compatible inference).
+   * Optional so externally-built GatewayConfig literals stay valid; the
+   * factory treats undefined/empty as "not configured".
+   */
+  openCodeApiKey?: string;
+  openCodeBaseUrl?: string;
+  openCodeModel?: string;
   redisUrl: string;
   cacheTtlSec: number;
   cacheEnabled: boolean;
@@ -162,6 +170,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     openRouterKey: str(env, "OPEN_ROUTER_KEY"),
     openRouterBaseUrl: str(env, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
     openRouterModel: str(env, "OPENROUTER_MODEL", "cohere/north-mini-code:free"),
+    openCodeApiKey: str(env, "OPENCODE_API_KEY"),
+    openCodeBaseUrl: str(env, "OPENCODE_BASE_URL", "https://opencode.ai/inference/go/openai/v1"),
+    openCodeModel: str(env, "OPENCODE_MODEL", "deepseek-v4.1-flash"),
     redisUrl: str(env, "REDIS_URL"),
     cacheTtlSec: num(env, "CACHE_TTL_S", 3600),
     cacheEnabled: bool(env, "CACHE_ENABLED", true),

@@ -18,6 +18,7 @@ const LABELS: Record<string, string> = {
   gemini: "Google",
   ollama: "Ollama-local",
   openrouter: "OpenRouter",
+  opencode: "OpenCode Go",
   mock: "Mock",
 };
 
@@ -28,6 +29,7 @@ export function buildProviderStatus(cfg: GatewayConfig, providers: Map<string, P
     { id: "gemini", endpoint: cfg.geminiBaseUrl, models: [cfg.geminiModel], configured: cfg.geminiApiKey !== "" },
     { id: "ollama", endpoint: cfg.ollamaBaseUrl, models: [cfg.ollamaModel], configured: true },
     { id: "openrouter", endpoint: cfg.openRouterBaseUrl, models: [cfg.openRouterModel], configured: cfg.openRouterKey !== "" },
+    { id: "opencode", endpoint: cfg.openCodeBaseUrl || "https://opencode.ai/inference/go/openai/v1", models: [cfg.openCodeModel || "deepseek-v4.1-flash"], configured: (cfg.openCodeApiKey ?? "") !== "" },
     { id: "mock", endpoint: "in-process", models: ["mock"], configured: true },
   ];
   return defs.map((d) => ({

@@ -176,6 +176,7 @@ export function registerChatRoutes(app: FastifyInstance, provider: ProviderAdapt
       cfg.openaiApiKey,
       cfg.anthropicApiKey,
       cfg.openRouterKey,
+      cfg.openCodeApiKey ?? "",
       tenantKey ?? "",
       auth.lane === "anonymous" ? auth.providerKey : "",
     ].filter((s) => typeof s === "string" && s.length >= 8);

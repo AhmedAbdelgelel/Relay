@@ -41,6 +41,12 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
     models: ["cohere/north-mini-code:free"],
   },
   {
+    id: "opencode",
+    label: "OpenCode Go",
+    endpoint: "https://opencode.ai/inference/go/openai/v1",
+    models: ["deepseek-v4.1-flash"],
+  },
+  {
     id: "mock",
     label: "Mock",
     endpoint: "in-process",
