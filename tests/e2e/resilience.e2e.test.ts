@@ -575,11 +575,22 @@ describe("cancel and abort cleanup", () => {
   }, 20000);
 
   it("abort during retrying failures: provider attempts stay bounded and the answer is admitted once", async () => {
-    const state = { calls: 0 };
+    const state = { calls: 0, entered: 0 };
+    let releaseFirst!: () => void;
+    const firstCallGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
     const provider = new ScriptedProvider("mock", {
       chat: async (req) => {
         state.calls++;
-        if (state.calls <= 2) throw new GatewayError(429, "provider_rate_limited", "mock rate limited.", true);
+        if (state.calls === 1) {
+          // Hold the first attempt until the test has aborted its waiter. This
+          // removes the poll-race that made the test flaky on slow CI runners.
+          state.entered++;
+          await firstCallGate;
+          throw new GatewayError(429, "provider_rate_limited", "mock rate limited.", true);
+        }
+        if (state.calls === 2) throw new GatewayError(429, "provider_rate_limited", "mock rate limited.", true);
         return { id: "recovered-after-abort", model: req.model, content: "recovered answer", usage: { prompt_tokens: 2, completion_tokens: 2 } };
       },
     });
@@ -589,8 +600,9 @@ describe("cancel and abort cleanup", () => {
       const ctrl = new AbortController();
       const pending = post(url, LANE_KEY, ask("abort retry storm"), ctrl.signal);
       pending.catch(() => undefined);
-      await until(() => state.calls === 1);
+      await until(() => state.entered === 1);
       ctrl.abort();
+      releaseFirst();
       await expect(pending).rejects.toThrow();
 
       // The shared flight that was already running keeps its own bounded
@@ -605,6 +617,7 @@ describe("cancel and abort cleanup", () => {
       expect(replayAgain.headers.get("x-cache")).toBe("HIT");
       expect(state.calls).toBe(3);
     } finally {
+      releaseFirst();
       await closeApp(app);
     }
   }, 20000);
