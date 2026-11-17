@@ -345,6 +345,13 @@ describe("provider timeout / connection refused", () => {
       expect(timedOut.statusCode).toBe(504);
       expect(Date.now() - started).toBeLessThan(1500);
 
+      // The 504 is returned to the waiter as soon as its own abort fires; the
+      // shared flight settles a tick later. Wait for that settlement so this
+      // test measures recovery, not the cleanup microtask order on a slow CI
+      // runner (an immediate retry could otherwise join the doomed flight).
+      await until(() => metrics.snapshot().provider_errors >= 1, 5000);
+      await sleep(10);
+
       // The failed flight is not cached and must not poison subsequent work:
       // a new request starts a fresh flight and is served.
       const second = await chat(app, LANE_KEY, ask("timeout then recover"));
