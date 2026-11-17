@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AhmedAbdelgelel/Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/AhmedAbdelgelel/Relay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 374 core + 112 UI](https://img.shields.io/badge/tests-373%20core%20%2B%20112%20UI-brightgreen)](tests/)
+[![Tests: 374 core + 112 UI](https://img.shields.io/badge/tests-374%20core%20%2B%20112%20UI-brightgreen)](tests/)
 [![Runtime: Node 24](https://img.shields.io/badge/runtime-Node%2024-339933)](Dockerfile)
 
 Relay is an OpenAI-compatible gateway with **two cache layers** in front of your LLM providers. It answers repeated requests from memory, answers safe near-duplicates from a semantic layer, and only calls the provider on a real miss. Every reply carries headers that say which layer answered and why.
@@ -197,5 +197,6 @@ The suite covers exact/semantic cache behavior, tenant isolation, the request sc
 - Gateway keys are hashed at rest; provider credentials are AES-256-GCM encrypted; secrets are redacted from error responses and logs.
 
 See [`SECURITY.md`](SECURITY.md) for the threat model, hardening checklist and residual risks. The Next.js control plane (`web/`) is a read/write client for the same gateway contract; it is optional.
+
 
 
