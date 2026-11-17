@@ -92,7 +92,7 @@ curl -s -X POST localhost:3000/v1/chat/completions \
 # first call: x-cache: MISS; repeat the same body: x-cache: HIT
 ```
 
-Docker: `docker compose up --build` starts gateway (`:3000`), control plane (`:3001`) and Redis. The OpenCode deployment was verified live through Relay: an 8 KB prompt returned `MISS` in ~4.8 s (provider time), then `HIT` in ~16 ms with zero extra provider calls.
+Docker: `docker compose up --build` starts gateway (`:3000`), control plane (`:3001`) and Redis. The OpenCode Go → DeepSeek V4.1 Flash path was also exercised live through Relay — see the live cache table below.
 
 > DeepSeek V4.1 Flash is a reasoning model: if `max_tokens` is too small, the budget can be consumed by reasoning tokens and the visible content may be empty (empty answers are never cached). Give it a normal token budget when testing large prompts.
 
@@ -117,6 +117,18 @@ The benchmark boots the real gateway on a loopback socket with the mock provider
 Each row: 8 exact-miss requests, 25 exact-HIT repeats and 25 semantic-HIT repeats; the p50/p95 are client-observed loopback RTTs. The important result is that **both hit layers stay flat as context grows** — cache work does not scale with prompt size — while misses carry the one provider call. Run details and the machine configuration are printed as `BENCH_JSON`.
 
 For a wider concurrency/mixed-traffic run, use `npm run bench:perf` (1,000 requests per scenario, 5 repeats, concurrency 1/10/50/100).
+
+### Live OpenCode Go + DeepSeek V4.1 Flash check
+
+A real gateway was run with `PROVIDER=opencode`, `OPENCODE_MODEL=deepseek-v4.1-flash`, exact cache enabled, and a 512 KB body limit. Each prompt was sent twice: the first request reached OpenCode, the repeat was served locally. No key is stored in the repository.
+
+| Context | First request (`MISS`) | Repeat (`HIT`) | Provider prompt tokens | Provider calls |
+|---:|---:|---:|---:|---:|
+| 8 KB | 8.13 s (provider) | 7.1 ms | 1,679 | 1 |
+| 32 KB | 6.81 s (provider) | 7.0 ms | 6,512 | 1 |
+| 64 KB | 7.87 s (provider) | 7.1 ms | 12,965 | 1 |
+
+All six requests returned `200` and `x-provider: opencode`; `/metrics` reported `exact_hits=3`, `exact_misses=3`, `provider_requests=3`, `provider_calls_avoided=3`. The exact-cache layer kept the repeat latency flat (~7 ms) even at 64 KB and with a real remote provider. These are single-run numbers on the current network, not a stable latency benchmark — use the hermetic table above for reproducibility.
 
 ## Supported API surface
 
